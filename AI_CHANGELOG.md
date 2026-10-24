@@ -308,3 +308,39 @@
 
 ### Testing
 - No code tests were run this turn (documentation-only change). Verified each of the five `docs/` image paths referenced in README.md resolves to an existing file on disk (all five present).
+
+## 2026-10-24 - Add Messy Desk Lab Streamlit app design spec (design only)
+
+### Changes
+- Added a design-only spec for "Messy Desk Lab", a four-section Streamlit app (Experiment, Live View, Results, Trial Explorer) layered over the existing simulation engine. No source code or simulation behavior was changed this turn.
+
+### Files Modified
+- `.kiro/specs/messy-desk-lab/design.md` — new technical design document (high-level + low-level).
+- `.kiro/specs/messy-desk-lab/.config.kiro` — new spec config (design-first feature).
+
+### Technical Details
+- Documented the minimal engine interface surface the app needs, cited per module (scene, robot, planner, sim, log, compare, run_eval, render).
+- Gap analysis: EpisodeResult carries only aggregate counts (no per-step scrub), so the design proposes promoting trace structures + build_trace stepping logic out of the pygame-bound render.py into a headless core (new src/trace.py or extended sim.py) with a single shared stepping path so sim and trace cannot drift.
+- Confirmed deterministic replay is possible from (planner_name, seed, n_items, clutter) alone, provided a fresh planner and fresh scene are rebuilt each replay (flagged the instance-reuse risk for stateful planners).
+- Recommended an optional, behavior-preserving planner.last_reason attribute (read after next_action) for action rationale, over widening the next_action return signature.
+- Deployment: separate app/requirements.txt without pygame/imageio/pytest, matplotlib Agg before pyplot, headless frames for Live View, and a synchronous-capped + cached batch approach under Streamlit's single-threaded rerun model.
+- All proposed engine changes flagged as proposed, optional, and behavior-preserving with determinism/parity test requirements.
+
+### Testing
+- No tests were run this turn (design document only; no code changed). `validate_spec_format` on design.md reported no errors, only expected design-first warnings about properties lacking requirement references.
+
+## 2026-10-24 - Remove stale streamlit-demo spec
+
+### Changes
+- Deleted the superseded `streamlit-demo` spec. It was an earlier three-tab demo design replaced by the broader four-section `messy-desk-lab` spec. No source code or simulation behavior changed.
+
+### Files Modified
+- `.kiro/specs/streamlit-demo/design.md` — deleted (stale design document).
+- `.kiro/specs/streamlit-demo/.config.kiro` — deleted (stale spec config).
+
+### Technical Details
+- The `messy-desk-lab` spec is the active successor and is the four-section superset (Experiment, Live View, Results, Trial Explorer) of the removed three-tab demo (Run, Compare, About).
+- Noted to the user that `messy-desk-lab/.config.kiro` currently reuses the same specId (`61807b9b-...`) that the deleted spec carried; offered to regenerate a unique ID. No ID change was made this turn.
+
+### Testing
+- No tests were run this turn (spec file deletion only; no code changed).
