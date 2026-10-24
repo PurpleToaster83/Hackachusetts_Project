@@ -362,3 +362,50 @@
 
 ### Testing
 - No tests were run this turn (planning documents only; no code changed). Both documents passed `validate_spec_format` with no issues.
+
+## 2026-10-24 - Messy Desk Lab Stage 1: headless logic layer + tests
+
+### Changes
+- Added the GUI-independent logic layer for Messy Desk Lab (`app/logic.py`) and its unit tests, implementing the experiment batch runner, confidence-interval statistics, input clamping, and an output-location guard. No simulation behavior in `src/` was changed.
+
+### Files Modified
+- `app/__init__.py` — new app package marker.
+- `app/logic.py` — new headless logic layer (data models, planner registry, batch runner, CI stats, output guard).
+- `tests/test_logic.py` — new unit tests for the logic layer.
+- `.kiro/specs/messy-desk-lab/tasks.md` — marked Stage 1 (task 1 and sub-tasks 1.1–1.4) complete.
+
+### Technical Details
+- `app/logic.py` imports only `src/`, numpy, and the standard library — never streamlit, pygame, or render (verified via sys.modules inspection and static grep).
+- Data models: `TrialConfig` (exactly planner_name, seed, n_items, clutter), `ExperimentConfig`, `TrialRow`, `Stat`, `PlannerStat`, `ExperimentResult`.
+- Planner registry mirrors render's factories WITHOUT importing render; `make_planner` builds a fresh instance each call and raises `ValueError` (listing valid names) for unknowns. `run_experiment` builds a fresh scene and fresh planner per trial via `src.sim.run_episode`, so mutable planner state never leaks between trials.
+- CI math mirrors `src/compare._ci95` and `src/run_eval`: `Z_95=1.96`, sample std with n-1, `0.0` for n<2; a test cross-checks `ci95` against `src.compare._ci95`. `overlap` matches the run_eval tie rule.
+- `build_scene` clamps clutter to [0,1] and n_items to a documented [0,30] range before delegating to `make_scene`.
+- Output guard `resolve_output_path` rejects relative paths whose first segment is a read-only input tree (`data/`, `robotics/`) and any path that resolves outside `out/`. During development the guard raised a correct-but-differently-worded error for `data/` paths than the test regex expected; fixed by making the read-only-tree rejection explicit and tightening the test assertions.
+- No dedicated file-writing tool was available, so files were created via shell heredocs and read back to verify.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q` (Python 3.12.15, pytest 9.1.1): 67 passed, 2 warnings. The 2 warnings are pre-existing imageio deprecations in `tests/test_render.py`, unrelated to this change.
+- Verified the import boundary independently: importing `app.logic` leaves streamlit/pygame/src.render absent from `sys.modules`, and a static grep finds no forbidden imports.
+- Confirmed via `git status` that no `src/` file was modified.
+
+## 2026-10-24 - Messy Desk Lab Stage 2: minimal Streamlit app (Experiment + Results)
+
+### Changes
+- Added the minimal runnable Streamlit app with Experiment and Results sections, a headless app-level requirements file, and static import-boundary tests. No simulation behavior in `src/` was changed.
+
+### Files Modified
+- `app/streamlit_app.py` — new UI-only Streamlit module (Experiment controls + Results table).
+- `app/requirements.txt` — new app/deploy dependency list (streamlit, numpy, pandas, matplotlib, pillow; excludes pygame/imageio/pytest).
+- `tests/test_streamlit_app.py` — new static (AST) boundary tests for the UI module.
+- `.kiro/specs/messy-desk-lab/tasks.md` — marked Stage 2 (task 2 and sub-tasks 2.1–2.3) complete.
+
+### Technical Details
+- `app/streamlit_app.py` imports only streamlit, app.logic, matplotlib (to force the backend), and pandas — no src/ math, pygame, or render. All computation goes through app.logic.
+- Forces `matplotlib.use("Agg")` at import time, before anything can import pyplot, so the app stays headless on Streamlit Community Cloud.
+- Experiment section: sidebar controls for n_items (3–30), clutter (0–1), trial count, base seed, and a planner multiselect from `logic.available_planners()`; a Run button calls `logic.run_experiment` inside `st.spinner` and caches the ExperimentResult in `st.session_state`. A try/except surfaces run failures via `st.error`.
+- Results section: per-planner table of `mean +/- 95% CI` for ticks/items sorted/failed grasps/pushes using the Stage 1 `ci95`; overlapping intervals labeled "tie" via `logic.overlap`, otherwise the lower planner is named. Real batch numbers only; accessibility via text labels (not colour) and explanatory captions.
+- Tests use `ast` source inspection rather than importing the module, because streamlit is an app/deploy dependency and is intentionally not installed in the test environment. During development the boundary test did not recognize `from app import logic` as `app.logic`; fixed by having the AST helper also record `pkg.name` forms.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q` (Python 3.12.15, pytest 9.1.1): 70 passed, 2 warnings. The 2 warnings are pre-existing imageio deprecations in `tests/test_render.py`, unrelated to this change.
+- Verified `app/streamlit_app.py` imports no src/pygame/render (static grep) and confirmed via `git diff --stat` that no `src/` file was modified.

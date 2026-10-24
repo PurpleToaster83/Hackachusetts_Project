@@ -16,24 +16,24 @@ Hard constraints honored throughout:
 
 ## Tasks
 
-- [ ] 1. Stage 1 — Headless logic layer: data models, batch runner, CI stats
-  - [ ] 1.1 Create `app/` package and the typed data models in `app/logic.py`
+- [x] 1. Stage 1 — Headless logic layer: data models, batch runner, CI stats
+  - [x] 1.1 Create `app/` package and the typed data models in `app/logic.py`
     - Create `app/__init__.py` and `app/logic.py`.
     - Define the dataclasses from the design: `ExperimentConfig`, `TrialConfig` (exactly `planner_name, seed, n_items, clutter`), `TrialRow`, `Stat`, `PlannerStat`, `ExperimentResult`.
     - Import `EpisodeResult` from `src.sim`; import nothing from `streamlit`, `pygame`, or `render`.
     - Add `available_planners() -> list[str]` and `make_planner(name, seed)` that construct a FRESH planner by name (`RandomPlanner(seed=seed)`, `NearestPlanner()`, `LeastCoveredPlanner()`, `NearestRetryPlanner()`, `OcclusionPlanner()` from `src.planner`) WITHOUT importing `render.py`'s `PLANNER_FACTORIES`; raise `ValueError` for an unknown name.
     - Add `planner_description(name) -> str` and `build_scene(seed, n_items, clutter)` delegating to `src.scene.make_scene`; clamp `clutter` to `[0, 1]`.
     - _Requirements: 1.4, 1.1, 5.1, 6.1, 6.3, 13.1, 12.4_
-  - [ ] 1.2 Implement the CI statistics functions in `app/logic.py`
+  - [x] 1.2 Implement the CI statistics functions in `app/logic.py`
     - Add `Z_95 = 1.96`, `mean(values)`, `ci95(values)` (= `Z_95 * sample_std(n-1) / sqrt(n)`, `0.0` for `n < 2`), and `overlap(a, b)` over two `Stat` intervals.
     - Mirror `src/compare.py::_ci95` and `src/run_eval.py` exactly; do not re-derive or duplicate the engine math beyond the shared definition.
     - _Requirements: 3.2, 3.3, 10.1, 10.2, 10.3_
-  - [ ] 1.3 Implement `run_experiment`, `aggregate_stats`, and the output-location guard in `app/logic.py`
+  - [x] 1.3 Implement `run_experiment`, `aggregate_stats`, and the output-location guard in `app/logic.py`
     - `run_experiment(config)` loops each planner over each seed building a FRESH `make_scene(...)` + FRESH `make_planner(...)` per trial and calling `src.sim.run_episode(scene, planner, seed=seed)`; collect `TrialRow`s paired with the real `EpisodeResult`.
     - `aggregate_stats(rows) -> list[PlannerStat]` computes mean ± 95% CI per metric (ticks=`steps`, sorted=`items_sorted`, failed=`failed_grasps`, pushes=`pushes`) per planner using `ci95`.
     - Add an output-path helper that resolves any generated file under `out/` only and rejects paths outside `out/` (never `data/` or `robotics/`).
     - _Requirements: 1.5, 1.6, 3.1, 3.5, 5.2, 5.3, 6.3, 12.1, 12.2, 12.3_
-  - [ ]* 1.4 Write unit tests for Stage 1 in `tests/test_logic.py`
+  - [x]* 1.4 Write unit tests for Stage 1 in `tests/test_logic.py`
     - CI math: `ci95` on a known list equals the hand-computed value; `ci95([x])` and `ci95([])` return `0.0`; `overlap` on known intervals. _Requirements: 3.2, 3.3, 10.1, 10.2, 10.3_
     - Determinism: `run_experiment` with equal config yields identical rows/stats; same seed → identical results. _Requirements: 1.5, 5.2, 5.3_
     - Rows carry real `EpisodeResult`; `aggregate_stats` matches a hand aggregation. _Requirements: 1.6, 3.1, 3.5_
@@ -42,18 +42,18 @@ Hard constraints honored throughout:
     - Output guard rejects paths outside `out/`. _Requirements: 12.1, 12.2_
     - _Requirements: 1.4, 1.5, 1.6, 3.1, 3.2, 3.3, 5.2, 5.3, 6.1, 10.1, 10.2, 10.3, 12.1, 12.2, 13.1_
 
-- [ ] 2. Stage 2 — Minimal runnable Streamlit shell (Experiment + Results)
-  - [ ] 2.1 Create `app/requirements.txt` for headless deployment
+- [x] 2. Stage 2 — Minimal runnable Streamlit shell (Experiment + Results)
+  - [x] 2.1 Create `app/requirements.txt` for headless deployment
     - List `numpy`, `pandas`, `matplotlib`, `streamlit`, and `pillow` (only if `st.image` needs it). Exclude `pygame`, `imageio`, `pytest`.
     - Leave the root `requirements.txt` unchanged.
     - _Requirements: 11.1, 11.2_
-  - [ ] 2.2 Create `app/streamlit_app.py` with the Experiment and Results sections
+  - [x] 2.2 Create `app/streamlit_app.py` with the Experiment and Results sections
     - UI-only module: imports `streamlit` and `app.logic` only; never imports `src/` math directly for computation and never imports `render.py`.
     - Force `matplotlib.use("Agg")` before any `pyplot` import at module top.
     - Experiment section: controls for `n_items` (clamped to the supported range), `clutter` slider in `[0, 1]`, trial/seed count, and a planner multiselect populated from `logic.available_planners()`; a Run button calling `logic.run_experiment` inside `st.spinner`; cache the `ExperimentResult` in `st.session_state`.
     - Results section: per-planner mean ± 95% CI table for ticks, items sorted, failed grasps, pushes, derived only from the cached `EpisodeResult` rows; show a tie note when two planners' intervals overlap (via `logic.overlap`).
     - _Requirements: 1.1, 1.2, 1.7, 3.1, 3.4, 3.5, 6.2, 11.3_
-  - [ ]* 2.3 Write import-boundary and smoke tests in `tests/test_streamlit_app.py`
+  - [x]* 2.3 Write import-boundary and smoke tests in `tests/test_streamlit_app.py`
     - Assert `app/streamlit_app.py` imports `streamlit` + `app.logic` only (no direct `src/` math import, no `render`). _Requirements: 6.2_
     - Assert the module forces the Agg backend before `pyplot` (source inspection). _Requirements: 11.3_
     - _Requirements: 6.2, 11.3_

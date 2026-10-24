@@ -1,0 +1,9 @@
+# Messy Desk Lab — Streamlit app dependencies (headless).
+# Deliberately EXCLUDES pygame, imageio, and pytest: the app renders replays
+# with matplotlib's Agg backend (no pygame window) and needs no video encoder
+# or test runner on the Streamlit Community Cloud container.
+streamlit
+numpy
+pandas
+matplotlib
+pillow
