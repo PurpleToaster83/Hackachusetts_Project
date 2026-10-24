@@ -221,6 +221,10 @@ def _render_live_view(result: logic.ExperimentResult) -> None:
         "Replay a single trial tick by tick from pre-rendered headless frames. "
         "Pick a trial, then play, pause, step, or scrub."
     )
+    st.caption(
+        "Top-down view of a kinematic sorting simulation "
+        "(no 3D physics or real hardware)."
+    )
 
     rows = result.rows
     if not rows:

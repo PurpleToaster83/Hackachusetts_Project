@@ -452,3 +452,24 @@
 - Ran `.venv/bin/python -m pytest -q` (Python 3.12.15, pytest 9.1.1): 108 passed, 2 warnings (up from 70; the parity sweep and replay/render tests added the rest). The 2 warnings are pre-existing imageio deprecations in `tests/test_render.py`, unrelated to this change.
 - Confirmed via `git diff --quiet` that `src/sim.py`, `src/robot.py`, `src/scene.py`, and `src/planner.py` are unchanged (no grasp/tick/constant logic touched).
 - Verified `app/logic.py` loads none of streamlit/pygame/src.render into sys.modules, and `app/streamlit_app.py` has no src/pygame/render imports.
+
+## 2026-10-24 - Live View renderer: recognizable item glyphs + two-jaw gripper
+
+### Changes
+- Improved the Live View headless frame renderer so items read as everyday desk objects (pen/key/mug/trash) and the gripper reads as a two-jaw claw. Presentation only — no simulation behavior, geometry, coverage, z-order, or any `src/` file was changed; all EpisodeResult values stay identical.
+
+### Files Modified
+- `app/logic.py` — rewrote item and gripper drawing in `draw_frame`; added `_draw_item_glyph` and `_draw_gripper` helpers and a per-kind accent palette.
+- `app/streamlit_app.py` — added the Live View caption "Top-down view of a kinematic sorting simulation (no 3D physics or real hardware)."
+
+### Technical Details
+- Glyphs are matplotlib-drawn shapes (no emoji/unicode/fonts, so they render reliably on a headless Cloud container): pen = rounded body + nib along the item's longer axis; key = round bow with hole + blade with two teeth; mug = rounded square + handle arc; trash = crumpled polygon blob with scribble strokes.
+- Each glyph is scaled to fit strictly within the item's existing bounding box `(s.w, s.h)`, and a faint outline of the true box is kept so the real sim footprint stays visible. The accessible kind label (P/K/M/T) is retained at the box corner as a fallback; distinct per-kind colours are preserved; the fail highlight still recolours only `event_item`.
+- The trash blob's vertices are jittered by a per-item `numpy.random.default_rng(s.id)` created locally in the renderer — it does not touch or share the simulation's rng, so sim determinism is unaffected.
+- The gripper is now two parallel jaw rectangles on a base bar; jaws close in and highlight on a grasp, keeping the existing grasp/fail/push/idle ring colours.
+- The renderer still forces `matplotlib.use("Agg")` before importing pyplot (verified Agg precedes the pyplot import) and imports no pygame or render.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q` (Python 3.12.15, pytest 9.1.1): 108 passed, 2 warnings — unchanged count, confirming no behavior changed. The 2 warnings are pre-existing imageio deprecations in `tests/test_render.py`.
+- Smoke-rendered a full 25-frame replay (occlusion, seed 3, 20 items, clutter 0.9) exercising move/grasp/fail events across all glyph kinds with no errors; sample frame shape (320, 420, 3) uint8.
+- Confirmed via `git status`/`git diff -- src/` that no `src/` file changed, and via runtime sys.modules check that importing `app.logic` loads no pygame.

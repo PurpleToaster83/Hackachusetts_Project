@@ -501,6 +501,141 @@ def replay_trial(config: TrialConfig) -> ReplayResult:
     )
 
 
+# Darker per-kind accents for glyph detail (same hue family, lower value).
+_KIND_DARK: dict[str, tuple[float, float, float]] = {
+    "pen": (30 / 255, 70 / 255, 150 / 255),
+    "key": (150 / 255, 130 / 255, 20 / 255),
+    "mug": (40 / 255, 120 / 255, 70 / 255),
+    "trash": (120 / 255, 50 / 255, 50 / 255),
+}
+
+
+def _draw_item_glyph(ax, s, fill, accent) -> None:
+    """Draw a recognizable top-down glyph for item ``s`` inside its own box.
+
+    Presentation only: the glyph is a matplotlib-drawn shape (no font/emoji)
+    scaled to fit within the item's existing bounding box ``(s.w, s.h)`` so it
+    never changes the collision/coverage geometry. ``fill`` is the kind colour;
+    ``accent`` is a darker detail colour. A faint outline of the true bounding
+    box is kept so the real footprint stays visible.
+    """
+    from matplotlib.patches import Arc, Circle, FancyBboxPatch, Polygon, Rectangle
+
+    cx, cy, w, h = s.x, s.y, s.w, s.h
+    half = min(w, h) / 2.0
+
+    # Faint true-box outline (the actual sim footprint).
+    ax.add_patch(
+        Rectangle(
+            (cx - w / 2, cy - h / 2), w, h,
+            facecolor="none", edgecolor="#141418", linewidth=0.5, alpha=0.35,
+        )
+    )
+
+    if s.kind == "pen":
+        # Thin rounded body along the item's longer axis, with a nib triangle.
+        horizontal = w >= h
+        length = (w if horizontal else h) * 0.82
+        thick = max(2.0, half * 0.32)
+        if horizontal:
+            x0, y0 = cx - length / 2, cy - thick / 2
+            bw, bh = length, thick
+            nib = [(cx + length / 2, cy - thick), (cx + length / 2, cy + thick),
+                   (cx + length / 2 + thick * 1.3, cy)]
+        else:
+            x0, y0 = cx - thick / 2, cy - length / 2
+            bw, bh = thick, length
+            nib = [(cx - thick, cy + length / 2), (cx + thick, cy + length / 2),
+                   (cx, cy + length / 2 + thick * 1.3)]
+        ax.add_patch(
+            FancyBboxPatch(
+                (x0, y0), bw, bh,
+                boxstyle="round,pad=0,rounding_size=%.2f" % (thick / 2),
+                facecolor=fill, edgecolor=accent, linewidth=0.8,
+            )
+        )
+        ax.add_patch(Polygon(nib, facecolor=accent, edgecolor=accent))
+
+    elif s.kind == "key":
+        # Round bow with a hole, plus a short blade with two teeth.
+        bow_r = half * 0.42
+        bx = cx - w * 0.18
+        ax.add_patch(Circle((bx, cy), bow_r, facecolor=fill, edgecolor=accent, linewidth=0.8))
+        ax.add_patch(Circle((bx, cy), bow_r * 0.4, facecolor="#2c303a", edgecolor=accent, linewidth=0.6))
+        blade_w = w * 0.5
+        blade_h = max(2.0, half * 0.22)
+        ax.add_patch(Rectangle((bx, cy - blade_h / 2), blade_w, blade_h,
+                               facecolor=fill, edgecolor=accent, linewidth=0.6))
+        tooth = blade_h
+        for frac in (0.6, 0.85):
+            tx = bx + blade_w * frac
+            ax.add_patch(Rectangle((tx, cy + blade_h / 2), tooth * 0.5, tooth,
+                                   facecolor=fill, edgecolor=accent, linewidth=0.5))
+
+    elif s.kind == "mug":
+        # Rounded square body with a handle arc on the right.
+        body = min(w, h) * 0.6
+        ax.add_patch(
+            FancyBboxPatch(
+                (cx - body / 2, cy - body / 2), body, body,
+                boxstyle="round,pad=0,rounding_size=%.2f" % (body * 0.22),
+                facecolor=fill, edgecolor=accent, linewidth=0.9,
+            )
+        )
+        hr = body * 0.42
+        ax.add_patch(Arc((cx + body / 2, cy), hr, hr, angle=0,
+                         theta1=-80, theta2=80, edgecolor=accent, linewidth=1.6))
+
+    else:  # trash: a crumpled scribble blob
+        import numpy as _np
+
+        rng = _np.random.default_rng(s.id)  # stable per item, no sim rng used
+        r = half * 0.62
+        pts = []
+        for k in range(7):
+            ang = 2 * _np.pi * k / 7
+            rad = r * (0.6 + 0.4 * rng.random())
+            pts.append((cx + rad * _np.cos(ang), cy + rad * _np.sin(ang)))
+        ax.add_patch(Polygon(pts, facecolor=fill, edgecolor=accent, linewidth=0.8))
+        # A couple of scribble strokes for the crumpled look.
+        ax.plot([cx - r * 0.4, cx + r * 0.3], [cy - r * 0.2, cy + r * 0.3],
+                color=accent, linewidth=0.7)
+        ax.plot([cx - r * 0.2, cx + r * 0.4], [cy + r * 0.3, cy - r * 0.3],
+                color=accent, linewidth=0.7)
+
+
+def _draw_gripper(ax, gx: float, gy: float, event: str) -> None:
+    """Draw a two-jaw gripper (open claw) at ``(gx, gy)``, drawn shapes only.
+
+    Two short parallel rectangles form the jaws on a small base. On a ``grasp``
+    the jaws close in and are highlighted; ``push`` and the idle move keep the
+    existing ring colours (green grasp, amber push, pale idle/fail).
+    """
+    from matplotlib.patches import Rectangle
+
+    color = "#f0f0f5"
+    if event == "grasp":
+        color = "#78e68c"
+    elif event == "push":
+        color = "#f0c86e"
+    elif event == "fail":
+        color = "#eb4646"
+
+    jaw_len = 12.0
+    jaw_thick = 3.0
+    gap = 10.0 if event != "grasp" else 4.0  # jaws close on a grasp
+
+    # Base bar the jaws hang from.
+    ax.add_patch(Rectangle((gx - (gap / 2 + jaw_thick), gy - jaw_len / 2 - 4),
+                           gap + 2 * jaw_thick, jaw_thick,
+                           facecolor=color, edgecolor="none"))
+    # Left and right jaws (parallel rectangles forming the claw).
+    ax.add_patch(Rectangle((gx - gap / 2 - jaw_thick, gy - jaw_len / 2),
+                           jaw_thick, jaw_len, facecolor=color, edgecolor="none"))
+    ax.add_patch(Rectangle((gx + gap / 2, gy - jaw_len / 2),
+                           jaw_thick, jaw_len, facecolor=color, edgecolor="none"))
+
+
 def draw_frame(
     frame: ReplayFrame,
     containers: list[ContainerBox],
@@ -546,29 +681,19 @@ def draw_frame(
 
     for s in frame.items:  # already low-z first from the trace core
         is_fail = frame.event == "fail" and s.id == frame.event_item
-        color = _FAIL_RGB if is_fail else _KIND_RGB.get(s.kind, (0.8, 0.8, 0.8))
-        ax.add_patch(
-            Rectangle(
-                (s.x - s.w / 2, s.y - s.h / 2),
-                s.w,
-                s.h,
-                facecolor=color,
-                edgecolor="#141418",
-                linewidth=0.8,
-                linestyle=_KIND_EDGE.get(s.kind, "solid"),
-            )
-        )
+        fill = _FAIL_RGB if is_fail else _KIND_RGB.get(s.kind, (0.8, 0.8, 0.8))
+        accent = _KIND_DARK.get(s.kind, (0.1, 0.1, 0.1))
+        # Draw a recognizable glyph inside the item's real bounding box.
+        _draw_item_glyph(ax, s, fill, accent)
+        # Accessible text label (also a fallback if a glyph is hard to read);
+        # placed at the top-left of the box so it does not hide the glyph.
         ax.text(
-            s.x, s.y, _KIND_LETTER.get(s.kind, "?"),
-            color="#141418", ha="center", va="center", fontsize=8,
+            s.x - s.w / 2 + 2, s.y - s.h / 2 + 2, _KIND_LETTER.get(s.kind, "?"),
+            color="#141418", ha="left", va="top", fontsize=7, fontweight="bold",
         )
 
-    ring = "#f0f0f5"
-    if frame.event == "grasp":
-        ring = "#78e68c"
-    elif frame.event == "push":
-        ring = "#f0c86e"
-    ax.add_patch(Circle((frame.gx, frame.gy), 9, fill=False, edgecolor=ring, linewidth=2))
+    # Two-jaw gripper (drawn shapes, no font); closes/highlights on a grasp.
+    _draw_gripper(ax, frame.gx, frame.gy, frame.event)
 
     fig.canvas.draw()
     rgb = np.asarray(fig.canvas.buffer_rgba())[:, :, :3].copy()
