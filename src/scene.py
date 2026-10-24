@@ -75,7 +75,9 @@ class Scene:
     items: list[Item]
     containers: list[Container]
     clutter: float
-    rng: np.random.Generator = field(repr=False)
+    # The generator carries no value identity, so exclude it from equality and
+    # repr. Two scenes built from the same seed then compare equal by value.
+    rng: np.random.Generator = field(repr=False, compare=False)
 
     def item_by_id(self, item_id: int) -> Item:
         """Return the item with the given id."""
@@ -177,19 +179,22 @@ def occluders(scene: Scene) -> dict[int, list[int]]:
     """Map each item id to the ids of items that cover more than 25% of it.
 
     An item A occludes B when ``A.z > B.z`` and the overlap area divided by B's
-    area exceeds :data:`OCCLUSION_THRESHOLD`.
+    area exceeds :data:`OCCLUSION_THRESHOLD`. Items that nothing covers are
+    omitted entirely, so ``len(occluders(scene))`` counts covered items.
     """
     result: dict[int, list[int]] = {}
     for target in scene.items:
         area = target.area
+        if area <= 0.0:
+            continue
         covering: list[int] = []
-        if area > 0.0:
-            for other in scene.items:
-                if other.id == target.id:
-                    continue
-                if other.z <= target.z:
-                    continue
-                if _overlap_area(other, target) / area > OCCLUSION_THRESHOLD:
-                    covering.append(other.id)
-        result[target.id] = sorted(covering)
+        for other in scene.items:
+            if other.id == target.id:
+                continue
+            if other.z <= target.z:
+                continue
+            if _overlap_area(other, target) / area > OCCLUSION_THRESHOLD:
+                covering.append(other.id)
+        if covering:
+            result[target.id] = sorted(covering)
     return result
