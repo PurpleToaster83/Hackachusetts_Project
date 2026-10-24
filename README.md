@@ -78,11 +78,11 @@ disabling pushes changed nothing within the intervals:
 Plots and the demo are generated into `out/` (which is gitignored). Run the
 commands below to create them.
 
-![Ticks to clear vs item count](out/plots/ticks_vs_items.png)
-![Failed grasps vs item count](out/plots/failed_vs_items.png)
-![Sensitivity sweep](out/plots/sensitivity.png)
-![Push ablation](out/plots/ablation.png)
-![Demo: random vs occlusion](out/demo.gif)
+![Ticks to clear vs item count](docs/ticks_vs_items.png)
+![Failed grasps vs item count](docs/failed_vs_items.png)
+![Sensitivity sweep](docs/sensitivity.png)
+![Push ablation](docs/ablation.png)
+![Demo: random vs occlusion](docs/demo.gif)
 
 ## Limitations
 

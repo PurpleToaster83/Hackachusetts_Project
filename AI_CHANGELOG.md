@@ -293,3 +293,18 @@
 - Ran the same suite with conftest.py temporarily moved aside this turn: 50 passed (confirming conftest.py is no longer required once `src/__init__.py` exists); conftest.py was restored.
 - Ran `.venv/bin/pip install -r requirements.txt --dry-run` this turn: resolves cleanly; all satisfied except `imageio-ffmpeg-0.6.0`, which pip reports it "would install".
 - Confirmed all README-referenced artifacts exist: `out/plots/{ticks_vs_items,failed_vs_items,sensitivity,ablation}.png` and `out/demo.gif`.
+
+## 2026-10-24 - Point README images at docs/ instead of gitignored out/
+
+### Changes
+- Repointed the five embedded image links in `README.md` from `out/plots/*.png` and `out/demo.gif` to the committed copies under `docs/`, so the plots and demo render on GitHub (the `out/` directory is gitignored and would not display).
+
+### Files Modified
+- `README.md` — changed the five image paths: `ticks_vs_items.png`, `failed_vs_items.png`, `sensitivity.png`, `ablation.png` now resolve under `docs/`, and `demo.gif` points to `docs/demo.gif`. No other content changed; the Results section still notes `out/` is generated and gitignored.
+
+### Technical Details
+- The `docs/` folder (pre-existing this turn, not created by me) holds copies of the four plots and the demo gif. Image filenames there are flat (`docs/sensitivity.png`, etc.), unlike the `out/plots/` subpath, so the links were adjusted accordingly.
+- Only Markdown image references changed; all result numbers and prose are untouched.
+
+### Testing
+- No code tests were run this turn (documentation-only change). Verified each of the five `docs/` image paths referenced in README.md resolves to an existing file on disk (all five present).
