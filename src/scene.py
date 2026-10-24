@@ -23,6 +23,45 @@ KINDS: tuple[str, ...] = ("pen", "key", "mug", "trash")
 # Overlap of an item that must be covered for it to count as occluded.
 OCCLUSION_THRESHOLD: float = 0.25
 
+# EXPERIMENTAL: per-kind convex footprint shape used only in rotated mode.
+# pen stays a (long thin) rectangle; the others are distinct convex polygons.
+# All shapes are strictly convex so the convex-only overlap clipping is valid.
+KIND_SHAPE: dict[str, str] = {
+    "pen": "box",
+    "key": "hexagon",
+    "mug": "rounded",
+    "trash": "blob",
+}
+
+
+def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Counter-clockwise convex hull of 2D ``points`` (Andrew's monotone chain).
+
+    Returns the hull vertices in CCW order. Guarantees a convex result, so a
+    jittered "blob" point set becomes a valid convex polygon for the
+    convex-only overlap math. Degenerate inputs (<3 unique points) are returned
+    as-is.
+    """
+    pts = sorted(set(points))
+    if len(pts) < 3:
+        return pts
+
+    def cross(o, a, b) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower: list[tuple[float, float]] = []
+    for pt in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], pt) <= 0:
+            lower.pop()
+        lower.append(pt)
+    upper: list[tuple[float, float]] = []
+    for pt in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], pt) <= 0:
+            upper.pop()
+        upper.append(pt)
+    # Concatenate, dropping each list's last point (shared with the other).
+    return lower[:-1] + upper[:-1]
+
 
 @dataclass
 class Item:
@@ -39,20 +78,95 @@ class Item:
     w: float  # width, pixels
     h: float  # height, pixels
     z: float  # stacking height; higher z sits on top
+    angle: float = 0.0  # footprint rotation in radians; 0.0 == axis-aligned
+    # Convex footprint shape. "box" (default) is the axis-aligned rectangle used
+    # by the published results. The others are EXPERIMENTAL convex polygons used
+    # only in rotated mode: "hexagon" (key), "rounded" (mug), "blob" (an
+    # irregular convex polygon, trash). "pen" items keep "box" (a long thin
+    # rectangle from their w/h). All shapes are strictly convex.
+    shape: str = "box"
+
+    def _local_vertices(self) -> list[tuple[float, float]]:
+        """Unrotated, center-origin footprint vertices (CCW), fit in w x h.
+
+        For ``shape == "box"`` these are exactly the axis-aligned box corners,
+        so box behavior is unchanged. Other shapes are convex polygons scaled to
+        fit within the item's ``w`` x ``h`` extent.
+        """
+        hw, hh = self.w / 2.0, self.h / 2.0
+        if self.shape == "box":
+            return [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+        if self.shape == "hexagon":
+            # Elongated convex hexagon: flat-ish left/right ends, wide middle.
+            return [
+                (-hw, 0.0), (-hw * 0.5, -hh), (hw * 0.5, -hh),
+                (hw, 0.0), (hw * 0.5, hh), (-hw * 0.5, hh),
+            ]
+        if self.shape == "rounded":
+            # Convex octagon approximating a rounded footprint.
+            k = 0.5 * (2.0 ** 0.5 - 1.0) * 2  # corner-cut fraction ~0.414
+            cx, cy = hw * (1 - k), hh * (1 - k)
+            return [
+                (-cx, -hh), (cx, -hh), (hw, -cy), (hw, cy),
+                (cx, hh), (-cx, hh), (-hw, cy), (-hw, -cy),
+            ]
+        if self.shape == "blob":
+            # Irregular CONVEX polygon: deterministic per-item radii at sorted
+            # angles, then take the convex hull to guarantee convexity.
+            rng = np.random.default_rng(self.id)
+            pts = []
+            n = 7
+            for i in range(n):
+                ang = 2.0 * np.pi * i / n
+                r = 0.6 + 0.4 * rng.random()
+                pts.append((r * hw * np.cos(ang), r * hh * np.sin(ang)))
+            return _convex_hull(pts)
+        # Unknown shape: fall back to the box.
+        return [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+
+    def polygon(self) -> list[tuple[float, float]]:
+        """Footprint vertices (CCW) in pixels, rotated by ``angle`` about center.
+
+        With ``shape == "box"`` and ``angle == 0.0`` the vertices are exactly the
+        axis-aligned box corners, so box-based behavior is unchanged.
+        """
+        ca = np.cos(self.angle)
+        sa = np.sin(self.angle)
+        return [
+            (self.x + lx * ca - ly * sa, self.y + lx * sa + ly * ca)
+            for lx, ly in self._local_vertices()
+        ]
 
     @property
     def area(self) -> float:
-        """Item footprint area in square pixels."""
-        return self.w * self.h
+        """Footprint area in square pixels.
+
+        For a ``"box"`` this is exactly ``w * h`` (unchanged). For other convex
+        shapes it is the true polygon area (shoelace), so ``covered_fraction``
+        divides by the correct denominator. Rotation preserves area.
+        """
+        if self.shape == "box":
+            return self.w * self.h
+        poly = self._local_vertices()
+        s = 0.0
+        n = len(poly)
+        for i in range(n):
+            x1, y1 = poly[i]
+            x2, y2 = poly[(i + 1) % n]
+            s += x1 * y2 - x2 * y1
+        return abs(s) / 2.0
 
     def bounds(self) -> tuple[float, float, float, float]:
-        """Axis-aligned bounds as (left, top, right, bottom) in pixels."""
-        return (
-            self.x - self.w / 2.0,
-            self.y - self.h / 2.0,
-            self.x + self.w / 2.0,
-            self.y + self.h / 2.0,
-        )
+        """Axis-aligned bounding box (left, top, right, bottom) of the footprint.
+
+        For a ``"box"`` at ``angle == 0.0`` this is the item's own box; otherwise
+        it is the AABB enclosing the (possibly rotated) polygon, used as a cheap
+        broad-phase.
+        """
+        poly = self.polygon()
+        xs = [px for px, _ in poly]
+        ys = [py for _, py in poly]
+        return (min(xs), min(ys), max(xs), max(ys))
 
 
 @dataclass
@@ -87,23 +201,149 @@ class Scene:
         raise KeyError(item_id)
 
 
+def _shoelace_area(poly: list[tuple[float, float]]) -> float:
+    """Unsigned area of a simple polygon (pixels^2) via the shoelace formula."""
+    n = len(poly)
+    if n < 3:
+        return 0.0
+    s = 0.0
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        s += x1 * y2 - x2 * y1
+    return abs(s) / 2.0
+
+
+# Signed-distance tolerance (pixels^2 scale) for deciding "on the clip edge".
+# Points within this band of an edge are treated as exactly on it, so a vertex
+# that lands on a clip boundary does not spawn a redundant intersection vertex.
+_ON_EDGE_EPS: float = 1e-9
+
+
+def _clip_convex(
+    subject: list[tuple[float, float]], clip: list[tuple[float, float]]
+) -> list[tuple[float, float]]:
+    """Clip CCW convex ``subject`` by CCW convex ``clip`` (Sutherland-Hodgman).
+
+    Returns the vertices of the intersection polygon (possibly empty). Both
+    inputs must be convex and counter-clockwise.
+
+    An intersection point is inserted ONLY when the two endpoints of a subject
+    edge lie strictly on opposite sides of the clip edge. When an endpoint lies
+    on the clip edge (within :data:`_ON_EDGE_EPS`) it is treated as inside and
+    no separate crossing point is added, which avoids the duplicate / degenerate
+    vertices that a ``>= 0`` test produces when a vertex sits exactly on an
+    edge. Consecutive duplicate vertices are collapsed as a final guard.
+    """
+    output = list(subject)
+    n = len(clip)
+    for i in range(n):
+        if not output:
+            break
+        cx1, cy1 = clip[i]
+        cx2, cy2 = clip[(i + 1) % n]
+        ex, ey = cx2 - cx1, cy2 - cy1  # clip edge direction
+
+        def side(p: tuple[float, float]) -> float:
+            # > 0 strictly left (inside) of the CCW edge, < 0 strictly right,
+            # ~0 on the edge.
+            return ex * (p[1] - cy1) - ey * (p[0] - cx1)
+
+        inp = output
+        output = []
+        m = len(inp)
+        for j in range(m):
+            cur = inp[j]
+            prv = inp[j - 1]
+            d_cur = side(cur)
+            d_prv = side(prv)
+            cur_in = d_cur >= -_ON_EDGE_EPS   # inside or on the edge
+            prv_in = d_prv >= -_ON_EDGE_EPS
+            # Only a STRICT crossing (one strictly outside, the other strictly
+            # inside) needs an intersection vertex. On-edge endpoints do not.
+            crossing = (d_cur > _ON_EDGE_EPS and d_prv < -_ON_EDGE_EPS) or (
+                d_cur < -_ON_EDGE_EPS and d_prv > _ON_EDGE_EPS
+            )
+            if cur_in:
+                if crossing:
+                    output.append(
+                        _edge_intersect(prv, cur, (cx1, cy1), (cx2, cy2))
+                    )
+                output.append(cur)
+            elif crossing:
+                output.append(
+                    _edge_intersect(prv, cur, (cx1, cy1), (cx2, cy2))
+                )
+    return _dedupe_consecutive(output)
+
+
+def _dedupe_consecutive(
+    poly: list[tuple[float, float]], eps: float = 1e-7
+) -> list[tuple[float, float]]:
+    """Drop vertices that coincide with the previous one (and wrap-around)."""
+    if not poly:
+        return poly
+    out: list[tuple[float, float]] = [poly[0]]
+    for px, py in poly[1:]:
+        qx, qy = out[-1]
+        if abs(px - qx) > eps or abs(py - qy) > eps:
+            out.append((px, py))
+    # Collapse a closing duplicate (last == first).
+    if len(out) > 1:
+        fx, fy = out[0]
+        lx, ly = out[-1]
+        if abs(fx - lx) <= eps and abs(fy - ly) <= eps:
+            out.pop()
+    return out
+
+
+def _edge_intersect(p1, p2, q1, q2) -> tuple[float, float]:
+    """Intersection point of line p1->p2 with the infinite line q1->q2."""
+    x1, y1 = p1
+    x2, y2 = p2
+    x3, y3 = q1
+    x4, y4 = q2
+    denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+    if denom == 0.0:
+        return p2  # parallel; degenerate, fall back to the segment end
+    t_num = (x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)
+    t = t_num / denom
+    return (x1 + t * (x2 - x1), y1 + t * (y2 - y1))
+
+
 def _overlap_area(a: Item, b: Item) -> float:
-    """Area of the axis-aligned overlap between two items, in square pixels."""
+    """Area of the overlap between two item footprints, in square pixels.
+
+    Works for rotated rectangles (and any convex footprint) via convex polygon
+    clipping. With both items axis-aligned (``angle == 0.0``) it equals the AABB
+    overlap, so box-based behavior is unchanged. A quick AABB reject skips the
+    clip when the bounding boxes do not touch.
+    """
     al, at, ar, ab = a.bounds()
     bl, bt, br, bb = b.bounds()
-    dx = min(ar, br) - max(al, bl)
-    dy = min(ab, bb) - max(at, bt)
-    if dx <= 0.0 or dy <= 0.0:
+    if min(ar, br) <= max(al, bl) or min(ab, bb) <= max(at, bt):
         return 0.0
-    return dx * dy
+    inter = _clip_convex(a.polygon(), b.polygon())
+    return _shoelace_area(inter)
 
 
-def make_scene(seed: int, n_items: int, clutter: float) -> Scene:
+def make_scene(
+    seed: int, n_items: int, clutter: float, rotate: bool = False
+) -> Scene:
     """Build a randomized cluttered desk.
 
     ``seed`` fully determines the scene. ``n_items`` is the number of items to
     scatter. ``clutter`` in [0, 1] pulls items toward the desk center so higher
     values produce more overlap. All sizes and positions are in pixels.
+
+    ``rotate`` is an EXPERIMENTAL opt-in (spike): when True each item is given a
+    random footprint ``angle`` in radians AND a per-kind convex shape from
+    :data:`KIND_SHAPE` (pen = thin rectangle, key = elongated hexagon, mug =
+    rounded octagon, trash = irregular convex blob). It defaults to False, and
+    when False every item stays an axis-aligned ``"box"`` and NO extra random
+    draw is made, so the rng draw order -- and therefore every existing scene
+    and downstream simulation result -- is byte-for-byte identical to before.
+    All shapes are strictly convex (the overlap clipping is convex-only).
     """
     if n_items < 0:
         raise ValueError("n_items must be non-negative")
@@ -143,7 +383,16 @@ def make_scene(seed: int, n_items: int, clutter: float) -> Scene:
 
         # Stacking order: later items tend to sit on top. Jitter avoids ties.
         z = float(i + rng.uniform(0.0, 0.5))
-        items.append(Item(id=i, kind=kind, x=x, y=y, w=w, h=h, z=z))
+
+        # EXPERIMENTAL: only draw an angle when rotation is requested, so the
+        # default (rotate=False) draw order is unchanged from the box model.
+        angle = float(rng.uniform(0.0, np.pi)) if rotate else 0.0
+        # Shape is a deterministic per-kind lookup (no rng draw), so it never
+        # perturbs the draw order. Axis-aligned mode keeps every item a "box".
+        shape = KIND_SHAPE.get(kind, "box") if rotate else "box"
+        items.append(
+            Item(id=i, kind=kind, x=x, y=y, w=w, h=h, z=z, angle=angle, shape=shape)
+        )
 
     return Scene(
         width=DESK_W,
@@ -175,18 +424,80 @@ def covered_fraction(scene: Scene, item_id: int) -> float:
     return float(min(covered / area, 1.0))
 
 
-def _edge_gap(a: Item, b: Item) -> float:
-    """Smallest pixel gap between two items' bounding boxes.
+def _aabb_gap(a: Item, b: Item) -> float:
+    """Smallest pixel gap between two items' axis-aligned bounding boxes.
 
-    Returns 0.0 when the boxes touch or overlap, otherwise the shortest
-    distance between their edges (the larger of the per-axis gaps, so a
-    diagonal separation is measured by whichever axis is clear).
+    Returns 0.0 when the boxes touch or overlap, otherwise the larger of the
+    per-axis gaps (so a diagonal separation is measured by whichever axis is
+    clear). This is the original box-based crowding measure.
     """
     al, at, ar, ab = a.bounds()
     bl, bt, br, bb = b.bounds()
     gap_x = max(bl - ar, al - br, 0.0)
     gap_y = max(bt - ab, at - bb, 0.0)
     return max(gap_x, gap_y)
+
+
+def _seg_seg_distance(p1, p2, q1, q2) -> float:
+    """Shortest distance between two 2D segments (0.0 if they intersect)."""
+    import math as _math
+
+    def dot(u, v):
+        return u[0] * v[0] + u[1] * v[1]
+
+    def sub(u, v):
+        return (u[0] - v[0], u[1] - v[1])
+
+    def clamp01(x):
+        return max(0.0, min(1.0, x))
+
+    def pt_seg(pt, a, b):
+        ab = sub(b, a)
+        denom = dot(ab, ab)
+        if denom == 0.0:
+            return _math.hypot(pt[0] - a[0], pt[1] - a[1])
+        tt = clamp01(dot(sub(pt, a), ab) / denom)
+        proj = (a[0] + tt * ab[0], a[1] + tt * ab[1])
+        return _math.hypot(pt[0] - proj[0], pt[1] - proj[1])
+
+    return min(
+        pt_seg(p1, q1, q2), pt_seg(p2, q1, q2),
+        pt_seg(q1, p1, p2), pt_seg(q2, p1, p2),
+    )
+
+
+def _poly_gap(a: Item, b: Item) -> float:
+    """Smallest pixel gap between two convex footprints (0.0 if overlapping).
+
+    Used when either item is rotated. When they overlap the gap is 0.0;
+    otherwise it is the minimum distance between their edges.
+    """
+    if _overlap_area(a, b) > 0.0:
+        return 0.0
+    pa = a.polygon()
+    pb = b.polygon()
+    na, nb = len(pa), len(pb)
+    best = float("inf")
+    for i in range(na):
+        e1a, e1b = pa[i], pa[(i + 1) % na]
+        for j in range(nb):
+            e2a, e2b = pb[j], pb[(j + 1) % nb]
+            d = _seg_seg_distance(e1a, e1b, e2a, e2b)
+            if d < best:
+                best = d
+    return best
+
+
+def _edge_gap(a: Item, b: Item) -> float:
+    """Smallest pixel gap between two item footprints.
+
+    For axis-aligned items (both ``angle == 0.0``) this uses the original
+    AABB gap, so box-based crowding is unchanged. If either item is rotated it
+    falls back to the convex polygon gap.
+    """
+    if a.angle == 0.0 and b.angle == 0.0:
+        return _aabb_gap(a, b)
+    return _poly_gap(a, b)
 
 
 def crowding_neighbors(scene: Scene, item_id: int, margin: float) -> list[int]:

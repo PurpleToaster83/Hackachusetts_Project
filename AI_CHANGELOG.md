@@ -507,3 +507,121 @@
 
 ### Testing
 - Ran `.venv/bin/python -m pytest -q` while verifying claims for the document: 108 passed, 2 warnings (pre-existing imageio deprecations in tests/test_render.py). No test or code change this turn; the run was verification only.
+
+## 2026-10-24 - SPIKE (experiment-shapes branch): rotated-rectangle item footprints
+
+### Changes
+- Feasibility spike (not a finished feature) proving items can be modeled as rotated rectangles instead of axis-aligned boxes while keeping overlap/occlusion/coverage/crowding coherent. All changes are on the throwaway `experiment-shapes` branch. The default (axis-aligned) path is behavior-preserving: no existing sim result changes.
+
+### Files Modified
+- `src/scene.py` — added `Item.angle` + `Item.polygon()`; rewrote `_overlap_area` as convex polygon intersection; made `_edge_gap` polygon-aware; added opt-in `make_scene(rotate=False)`.
+- `src/trace.py` — `ItemState` now carries `angle` so the renderer can see rotation.
+- `app/logic.py` — `ItemBox` carries `angle`; `_draw_item_glyph` draws the true rotated footprint for rotated items.
+
+### Technical Details
+- Geometry is encapsulated in scene.py behind `_overlap_area`, `covered_fraction`, `_edge_gap`/`crowding_neighbors`, `occluders`. robot.py and planner.py call only the named functions, so swapping internals to polygons required ZERO planner changes — the key feasibility finding.
+- `_overlap_area` uses Sutherland-Hodgman convex clipping + shoelace area with an AABB broad-phase reject; at angle 0 it equals the old AABB overlap exactly (verified 400, 1600, 0 on the hand-built cases). `_edge_gap` keeps the exact old AABB gap when both items are axis-aligned and falls back to a segment-to-segment polygon gap when either is rotated.
+- `make_scene` gained `rotate=False`; when False, NO extra rng draw is made, so the default draw order and every existing scene/sim result are byte-for-byte unchanged. Angle is drawn only when `rotate=True`.
+- Known limitations (spike): no committed test drives the rotated path (all 108 tests are angle=0); `_clip_convex` can emit a duplicate vertex when a vertex lies exactly on a clip edge (correct area in cases checked, not production-robust); `replay_trial`/Live View can't show rotation through the normal path because `build_trace` calls `make_scene` without `rotate=True`; rotated items draw as plain rectangles (no detailed glyphs); arbitrary non-rectangle polygons untested.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 108 passed, 2 warnings (pre-existing imageio deprecations). No box-based test needed updating because angle=0 is behavior-preserving. Suite is slower (~6.5s vs ~2s) due to polygon clipping replacing AABB math.
+- Ran `.venv/bin/python -m src.run_eval --quick`: completed end-to-end (all five planners, both sweeps).
+- Verified ad-hoc (not in the committed suite): all five planners run end-to-end and deterministically on `rotate=True` scenes and clear all items; polygon overlap varies correctly with angle (concentric 40x40 squares 1600 -> ~1325 at 45deg); Live View renders rotated footprints (preview written under out/, gitignored).
+- Confirmed current branch is `experiment-shapes`; changes are uncommitted.
+
+## 2026-10-24 - SPIKE (experiment-shapes): fix convex-clip degeneracy + rotated-rectangle tests
+
+### Changes
+- On the `experiment-shapes` branch, fixed the `_clip_convex` on-edge degeneracy in the rotated-footprint geometry and added committed tests for the rotated-rectangle path. Axis-aligned (angle=0) behavior is unchanged: the 108-test baseline still passes.
+
+### Files Modified
+- `src/scene.py` — rewrote `_clip_convex` Sutherland-Hodgman emission logic and added `_dedupe_consecutive`.
+- `tests/test_scene_rotated.py` — new test file (12 tests) for the rotated path.
+
+### Technical Details
+- The clip previously used a `>= 0` inside test, which emitted a redundant intersection vertex when a polygon vertex lay exactly on a clip edge (duplicate-vertex degeneracy). It now inserts an intersection point only on a STRICT crossing (one endpoint strictly inside, the other strictly outside, beyond `_ON_EDGE_EPS=1e-9`); on-edge endpoints are treated as inside without spawning a crossing point. `_dedupe_consecutive` collapses coincident and wrap-around vertices as a final guard.
+- Verified the previously-degenerate case (axis-aligned box + 45-degree diamond sharing a corner) now clips to a clean 3-vertex triangle with the correct 400 px^2 area, and angle=0 parity is preserved (400, 1600, 0; symmetric).
+- New tests cover: overlap correctness/symmetry for known rotated cases including the on-edge case; monotonic overlap decrease as two identical concentric squares rotate 0->45 deg; overlap never exceeds item area; covered_fraction stays in [0,1] (and caps at 1.0 with multiple rotated coverers); rotated-scene determinism for a fixed seed (angles, items, occluders stable); rotate=True assigns nonzero angles while rotate=False leaves them at 0; and occluders lists only higher-z items on rotated scenes.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 120 passed, 2 warnings. Breakdown confirmed separately: the new file alone is 12 passed, and everything except the new file is the unchanged 108-passed baseline. The 2 warnings are pre-existing imageio deprecations in `tests/test_render.py`.
+
+## 2026-10-24 - SPIKE (experiment-shapes): wire rotated footprints through app + eval
+
+### Changes
+- On the `experiment-shapes` branch, threaded the rotated-rectangle path through the Live View/replay flow and the evaluation harness so rotation is actually used and visible. Rotation is an explicit, default-False parameter everywhere, so the box-based path and the 120-test baseline are unchanged.
+
+### Files Modified
+- `src/trace.py` — `build_trace(..., rotate=False)` forwards to `make_scene`.
+- `app/logic.py` — `TrialConfig`/`ExperimentConfig` gained `rotate` (default False); `build_scene`, `run_trial`, `run_experiment`, and `replay_trial` forward it; `replay_trial` passes the same `rotate` to both the trace and the paired `run_episode`.
+- `app/streamlit_app.py` — added a "Rotated footprints (experimental)" sidebar checkbox (default on) and included `rotate` in the Live View replay cache key.
+- `src/run_eval.py` — added a `ROTATE` module flag + `--rotate` CLI option applied in `evaluate` (so sweeps/sensitivity/ablation all honor it); `out/results.md` now states its geometry model.
+
+### Technical Details
+- Rotation is threaded as an opt-in parameter rather than a global flip, so every existing axis-aligned test still exercises the box path and passes. The Live View shows rotated scenes because the experiment runs with `rotate=True` and each trial's config flows into `replay_trial`.
+- `replay_trial` uses the same `rotate` for the trace and the paired aggregate run, preserving trace-matches-sim on rotated scenes.
+- `out/results.md` is regenerated with a "Geometry model: ROTATED-RECTANGLE footprints (experimental)" header so rotated numbers cannot be mistaken for the box numbers. `README.md` was deliberately NOT touched (it still cites box numbers); `src/compare.py` still uses box scenes (only run_eval was wired, as requested).
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 120 passed, 2 warnings (pre-existing imageio deprecations). Default-False threading kept the box baseline green.
+- Verified via the app layer: a rotated `TrialConfig` yields replays with nonzero item angles; the rotated trace's final counters match its paired `EpisodeResult`; identical rotated configs produce identical frames and results (determinism); all five planners run end-to-end on rotated scenes via `run_experiment` and clear all items.
+- Ran `.venv/bin/python src/run_eval.py --rotate` (30 seeds): completed end-to-end; regenerated `out/results.md` and `out/plots/`. Rendered a rotated Live View frame (15/15 items rotated) and visually confirmed tilted footprints.
+- Rotated-world headline (clutter 0.9, 25 items): nearest 123.9 +/- 16.5 ticks / 24.10 failed; occlusion 68.7 +/- 5.3 / 10.27; leastcov 62.5 +/- 5.6 / 8.77. Sensitivity sweep shifted to 8 ties + 1 occlusion win (vs box 2/2/5). Push ablation still a tie.
+
+## 2026-10-24 - SPIKE (experiment-shapes): Object shape model control, default axis-aligned
+
+### Changes
+- On the `experiment-shapes` branch, added an "Object shape model" sidebar selectbox with "Axis-aligned boxes" (default) and "Rotated footprints (experimental)", replacing the earlier rotation checkbox that defaulted to on. The default is now axis-aligned, so doing nothing reproduces the published box behavior and numbers. Added an honest experimental caption near Results, shown only in rotated mode.
+
+### Files Modified
+- `app/streamlit_app.py` — replaced the rotation checkbox with the two-option "Object shape model" selectbox (default index 0 = axis-aligned); added the rotated-mode Results caption; help text avoids the "3D" token.
+
+### Technical Details
+- The selectbox maps "Rotated footprints (experimental)" -> rotate=True, else False; the value flows into ExperimentConfig.rotate and (unchanged from the prior wiring turn) through to make_scene across the batch runner, Live View replay, and Results.
+- Default-axis-aligned verified byte-identical: a default ExperimentConfig has rotate=False, and the axis-aligned batch result equals a direct box run_episode per seed (checked across seeds for occlusion).
+- Honest Results caption added (shown only when result.config.rotate is True): "Rotated footprints are experimental; under tilted overlapping shapes the occlusion-aware planner's advantage shrinks and a greedy least-covered rule performs comparably."
+- No grasp-probability constants or physics changed: `src/robot.py` is untouched (empty diff). The feature is never labeled "3D"; help text calls it tilted 2D rectangles. The one remaining "3D" string is the pre-existing Live View disclaimer "(no 3D physics or real hardware)", which denies 3D rather than labeling the feature, and was left in place.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 120 passed, 2 warnings (pre-existing imageio deprecations). The 108 box baseline is unchanged.
+- Verified default ExperimentConfig.rotate is False and the axis-aligned batch is byte-identical to a direct box run_episode; confirmed a rotated TrialConfig still produces replays with rotated item footprints. Browser launch is a manual step (not run here).
+
+## 2026-10-24 - SPIKE (experiment-shapes): per-kind convex polygon footprints
+
+### Changes
+- Extended the experimental rotated mode so each item type uses a distinct convex polygon footprint (pen = thin rectangle, key = elongated hexagon, mug = rounded octagon, trash = irregular convex blob) instead of only rotated rectangles. Strictly convex throughout; no concave shapes. Axis-aligned mode stays byte-identical and grasp constants are unchanged.
+
+### Files Modified
+- `src/scene.py` — added `Item.shape`, `_local_vertices()`, shape-aware `polygon()`/`area`; added `_convex_hull` and the `KIND_SHAPE` map; `make_scene(rotate=True)` assigns per-kind shapes.
+- `tests/test_scene_rotated.py` — added 15 tests for the convex-polygon footprints.
+
+### Technical Details
+- `Item.shape` defaults to "box"; `_local_vertices()` returns the exact axis-aligned box corners for "box", so `shape="box"`/`angle=0` keeps overlap/coverage byte-identical. Other shapes are convex polygons scaled to fit within the item's w x h.
+- The trash "blob" is built from deterministic per-item jittered points (default_rng(id), independent of the sim rng) passed through `_convex_hull` (Andrew's monotone chain, CCW), guaranteeing convexity — the convex-only `_overlap_area` clipping is never fed a concave shape. No STOP was needed; the convex-only constraint was fully satisfiable.
+- `area` is shoelace for non-box shapes (so `covered_fraction` divides by the true polygon area) and `w*h` for boxes (unchanged). All kind shapes verified convex, CCW, and area <= w*h.
+- `make_scene` assigns shape via a deterministic `KIND_SHAPE` lookup (no rng draw), so the default (rotate=False) draw order and results are unchanged; every item stays a "box" in axis-aligned mode.
+- Renderer not changed this turn: the geometry/overlap uses the true convex polygons, but Live View still draws non-box shapes as rectangles until `_local_vertices` is wired into `draw_frame` (flagged to the user).
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 135 passed, 2 warnings (pre-existing imageio deprecations). Up from 120 (+15).
+- Confirmed the baseline is intact: everything except the rotated-shape test file is still exactly 108 passed (axis-aligned byte-identical; box overlap 400.0, area 1600). The rotated-shape file alone is 27 passed (12 earlier rotated-rectangle tests + 15 new polygon tests).
+- Verified each kind's footprint is convex/CCW, overlap is symmetric for mixed shapes and never exceeds the smaller area, covered_fraction stays in [0,1], and polygon scenes are deterministic per seed.
+- `git diff --stat -- src/robot.py` is empty: grasp-probability constants untouched.
+
+## 2026-10-24 - SPIKE (experiment-shapes): Live View draws true convex polygon footprints
+
+### Changes
+- Updated the Live View frame renderer so that, in experimental polygon/rotated mode, each item is drawn as its actual convex footprint (pen rectangle, key hexagon, mug rounded octagon, trash blob) instead of a plain rectangle. Rendering-only: no physics, no overlap math, and axis-aligned rendering are unchanged. The 135-test suite stays green.
+
+### Files Modified
+- `src/trace.py` — `ItemState` now carries `shape` (default "box"), populated from the scene item.
+- `app/logic.py` — `ItemBox` carries `shape`; `_to_replay_frame` propagates it; `_draw_item_glyph` draws the true convex polygon for rotated/non-box items.
+
+### Technical Details
+- For any rotated or non-box item, `_draw_item_glyph` reconstructs the engine `src.scene.Item` from the drawable snapshot and calls its `.polygon()`, so the drawn footprint matches the sim's overlap/coverage geometry exactly (single source of truth). The axis-aligned box path (detailed pen/key/mug/trash glyphs) is untouched.
+- No physics/geometry changed: the renderer only READS `Item.polygon()`; the overlap math, grasp constants, and `src/scene.py` geometry functions are unchanged. (`src/scene.py` is in this turn's diff only from the prior turn's polygon work, already logged.)
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 135 passed, 2 warnings (pre-existing imageio deprecations). Unchanged count, confirming rendering-only.
+- Rendered and visually inspected a polygon-mode Live View frame: keys draw as hexagons, mugs as rounded octagons, trash as an irregular blob, pens as tilted rectangles; a box-mode frame still renders boxes. Previews written under out/ (gitignored). Confirmed axis-aligned items all keep shape="box".

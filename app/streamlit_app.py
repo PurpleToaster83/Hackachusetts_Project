@@ -98,6 +98,15 @@ def _experiment_controls() -> logic.ExperimentConfig:
         help="Pick two or more planners to compare on identical desks.",
     )
 
+    shape_model = st.sidebar.selectbox(
+        "Object shape model",
+        options=["Axis-aligned boxes", "Rotated footprints (experimental)"],
+        index=0,  # default: axis-aligned, so existing behavior is unchanged
+        help="Axis-aligned boxes match the published results. Rotated footprints "
+        "model items as tilted 2D rectangles (same flat top-down simulation).",
+    )
+    rotate = shape_model.startswith("Rotated")
+
     # Show each selected planner's one-line description as plain text.
     for name in planners:
         st.sidebar.caption(f"**{name}** — {logic.planner_description(name)}")
@@ -108,6 +117,7 @@ def _experiment_controls() -> logic.ExperimentConfig:
         clutter=float(clutter),
         seeds=seeds,
         planners=planners,
+        rotate=bool(rotate),
     )
 
 
@@ -161,6 +171,12 @@ def _render_results(result: logic.ExperimentResult) -> None:
         "seeds, from real episode runs. 'tie' means the two planners' intervals "
         "overlap at this sample size."
     )
+    if result.config.rotate:
+        st.caption(
+            "Rotated footprints are experimental; under tilted overlapping "
+            "shapes the occlusion-aware planner's advantage shrinks and a greedy "
+            "least-covered rule performs comparably."
+        )
 
     table = _stats_table(result)
     st.dataframe(
@@ -201,6 +217,7 @@ def _get_or_build_replay(row: logic.TrialRow):
         row.config.seed,
         row.config.n_items,
         row.config.clutter,
+        row.config.rotate,
     )
     cached = st.session_state.get(_REPLAY_KEY)
     if cached is None or cached[0] != key:

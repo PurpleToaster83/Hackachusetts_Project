@@ -64,7 +64,12 @@ PLANNER_FACTORIES: dict[str, object] = {
 # --------------------------------------------------------------------------- #
 @dataclass
 class ItemState:
-    """A drawable snapshot of one item (center, size, kind, z)."""
+    """A drawable snapshot of one item (center, size, kind, z, angle).
+
+    ``angle`` is the footprint rotation in radians (0.0 for axis-aligned items);
+    it lets the renderer draw the true rotated footprint. It never affects the
+    simulation, which reads geometry from the live Scene, not from the trace.
+    """
 
     id: int
     kind: str
@@ -73,6 +78,8 @@ class ItemState:
     w: float
     h: float
     z: float
+    angle: float = 0.0
+    shape: str = "box"  # convex footprint shape; lets the renderer draw it
 
 
 @dataclass
@@ -119,7 +126,11 @@ class Trace:
 def _item_states(scene: Scene) -> list[ItemState]:
     """Snapshot the scene's items as drawable states, sorted by z (low first)."""
     states = [
-        ItemState(id=it.id, kind=it.kind, x=it.x, y=it.y, w=it.w, h=it.h, z=it.z)
+        ItemState(
+            id=it.id, kind=it.kind, x=it.x, y=it.y, w=it.w, h=it.h, z=it.z,
+            angle=getattr(it, "angle", 0.0),
+            shape=getattr(it, "shape", "box"),
+        )
         for it in scene.items
     ]
     states.sort(key=lambda s: s.z)
@@ -127,7 +138,8 @@ def _item_states(scene: Scene) -> list[ItemState]:
 
 
 def build_trace(
-    planner_name: str, seed: int, n_items: int, clutter: float
+    planner_name: str, seed: int, n_items: int, clutter: float,
+    rotate: bool = False,
 ) -> Trace:
     """Replay one planner on a fresh scene, recording a per-tick trace.
 
@@ -138,8 +150,12 @@ def build_trace(
     "settled" tick frame after travel; travel itself is interpolated at draw
     time, so the trace stores the start/target gripper positions implicitly via
     consecutive frames.
+
+    ``rotate`` (experimental) forwards to :func:`make_scene`: when True the
+    scene's items get rotated-rectangle footprints. It must match the ``rotate``
+    passed to the paired ``run_episode``/``make_scene`` so outcomes agree.
     """
-    scene = make_scene(seed=seed, n_items=n_items, clutter=clutter)
+    scene = make_scene(seed=seed, n_items=n_items, clutter=clutter, rotate=rotate)
     planner = PLANNER_FACTORIES[planner_name](seed)
     rng = np.random.default_rng(seed)
 

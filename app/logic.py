@@ -116,16 +116,20 @@ def clamp_n_items(n_items: int) -> int:
     return int(min(max(n_items, N_ITEMS_MIN), N_ITEMS_MAX))
 
 
-def build_scene(seed: int, n_items: int, clutter: float) -> Scene:
+def build_scene(
+    seed: int, n_items: int, clutter: float, rotate: bool = False
+) -> Scene:
     """Build one Scene via ``make_scene``, clamping inputs first.
 
     ``clutter`` is clamped to [0, 1] and ``n_items`` to the supported range
     [0, 30] (the UI exposes 3-30). Geometry is in pixels on a 640x480 desk.
+    ``rotate`` (experimental) forwards to ``make_scene`` for rotated footprints.
     """
     return make_scene(
         seed=seed,
         n_items=clamp_n_items(n_items),
         clutter=clamp_clutter(clutter),
+        rotate=rotate,
     )
 
 
@@ -145,6 +149,7 @@ class TrialConfig:
     seed: int
     n_items: int
     clutter: float
+    rotate: bool = False  # EXPERIMENTAL: rotated-rectangle footprints when True
 
 
 @dataclass
@@ -155,6 +160,7 @@ class ExperimentConfig:
     clutter: float  # in [0, 1] (clamped on use)
     seeds: list[int]
     planners: list[str]
+    rotate: bool = False  # EXPERIMENTAL: rotated footprints when True
 
 
 @dataclass
@@ -243,7 +249,9 @@ def run_trial(config: TrialConfig) -> EpisodeResult:
     ``EpisodeResult`` because the scene, the planner, and the grasp-outcome
     draws are all seeded from ``config.seed``.
     """
-    scene = build_scene(config.seed, config.n_items, config.clutter)
+    scene = build_scene(
+        config.seed, config.n_items, config.clutter, rotate=config.rotate
+    )
     planner = make_planner(config.planner_name, config.seed)
     return run_episode(scene, planner, seed=config.seed)
 
@@ -305,6 +313,7 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
                 seed=seed,
                 n_items=config.n_items,
                 clutter=config.clutter,
+                rotate=config.rotate,
             )
             rows.append(TrialRow(config=trial, result=run_trial(trial)))
 
@@ -392,7 +401,11 @@ class ContainerBox:
 
 @dataclass
 class ItemBox:
-    """A drawable item snapshot. Center and size in pixels; z is stack height."""
+    """A drawable item snapshot. Center/size in pixels; z is stack height.
+
+    ``angle`` is the footprint rotation in radians (0.0 for axis-aligned);
+    the renderer draws the true rotated footprint when it is non-zero.
+    """
 
     id: int
     kind: str
@@ -401,6 +414,8 @@ class ItemBox:
     w: float
     h: float
     z: float
+    angle: float = 0.0
+    shape: str = "box"  # convex footprint shape (drawn true in rotated mode)
 
 
 @dataclass
@@ -451,7 +466,11 @@ def _to_replay_frame(tf) -> ReplayFrame:
         gx=tf.gx,
         gy=tf.gy,
         items=[
-            ItemBox(id=s.id, kind=s.kind, x=s.x, y=s.y, w=s.w, h=s.h, z=s.z)
+            ItemBox(
+                id=s.id, kind=s.kind, x=s.x, y=s.y, w=s.w, h=s.h, z=s.z,
+                angle=getattr(s, "angle", 0.0),
+                shape=getattr(s, "shape", "box"),
+            )
             for s in tf.items
         ],
         event=tf.event,
@@ -476,11 +495,15 @@ def replay_trial(config: TrialConfig) -> ReplayResult:
     clutter = clamp_clutter(config.clutter)
 
     trace: Trace = build_trace(
-        config.planner_name, seed=config.seed, n_items=n_items, clutter=clutter
+        config.planner_name, seed=config.seed, n_items=n_items, clutter=clutter,
+        rotate=config.rotate,
     )
 
     # Paired aggregate from the authoritative runner (fresh scene + planner).
-    scene = make_scene(seed=config.seed, n_items=n_items, clutter=clutter)
+    # Same seed AND same rotate as the trace, so the two agree.
+    scene = make_scene(
+        seed=config.seed, n_items=n_items, clutter=clutter, rotate=config.rotate
+    )
     planner = make_planner(config.planner_name, config.seed)
     result = run_episode(scene, planner, seed=config.seed)
 
@@ -519,10 +542,32 @@ def _draw_item_glyph(ax, s, fill, accent) -> None:
     ``accent`` is a darker detail colour. A faint outline of the true bounding
     box is kept so the real footprint stays visible.
     """
+    import numpy as _np
     from matplotlib.patches import Arc, Circle, FancyBboxPatch, Polygon, Rectangle
 
     cx, cy, w, h = s.x, s.y, s.w, s.h
     half = min(w, h) / 2.0
+
+    angle = getattr(s, "angle", 0.0)
+    shape = getattr(s, "shape", "box")
+    if angle or shape != "box":
+        # EXPERIMENTAL: draw the TRUE convex footprint the sim uses for this
+        # item -- pen rectangle, key hexagon, mug rounded octagon, trash blob --
+        # by reconstructing the engine Item and asking it for its polygon, so
+        # the drawn shape exactly matches the overlap/coverage geometry. The
+        # detailed per-kind glyph (handle arc, teeth, nib) is only drawn for the
+        # axis-aligned box path; a rotated/polygon item shows its real footprint
+        # plus the letter label.
+        from src.scene import Item as _Item
+
+        footprint = _Item(
+            id=s.id, kind=s.kind, x=cx, y=cy, w=w, h=h, z=s.z,
+            angle=angle, shape=shape,
+        ).polygon()
+        ax.add_patch(
+            Polygon(footprint, facecolor=fill, edgecolor=accent, linewidth=1.0)
+        )
+        return
 
     # Faint true-box outline (the actual sim footprint).
     ax.add_patch(
