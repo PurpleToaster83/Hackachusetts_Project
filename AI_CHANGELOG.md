@@ -492,3 +492,18 @@
 - Ran `.venv/bin/python -m pytest -q` (Python 3.12.15, pytest 9.1.1): 108 passed, 2 warnings — unchanged, confirming no behavior changed. The 2 warnings are pre-existing imageio deprecations in `tests/test_render.py`.
 - Rendered and visually inspected preview frames (written under out/, gitignored): a sparse desk shows the two-finger claw clearly and pens reading as pens; frame shapes confirmed 640x480 (default) and 240x320 (custom).
 - Confirmed via `git diff --stat`/`git status -- src/` that no `src/` file changed, and via runtime sys.modules check that importing `app.logic` loads no pygame.
+
+## 2026-10-24 - Add KIRO_USAGE.md documenting how Kiro was used
+
+### Changes
+- Added `KIRO_USAGE.md` at the repo root, a factual record of how the Kiro IDE was used in this project. No code changed.
+
+### Files Modified
+- `KIRO_USAGE.md` — new documentation file.
+
+### Technical Details
+- Covers: Kiro as the primary dev environment; the two modes of work (vibe-coded engine under src/ vs. the design-first spec in .kiro/specs/messy-desk-lab/ executed one stage at a time with review checkpoints); the Stop-triggered "AI Change Logger" hook in .kiro/hooks/ai-change-logger.json that appends to AI_CHANGELOG.md; the three steering files in .kiro/steering/ (product.md, tech.md, structure.md); the 108-test suite including tests/test_trace.py parity tests; an honest note that no MCP servers and no Kiro powers were used; and one line each on what Kiro helped most with and one limitation.
+- Every claim was verified before writing: ran pytest (108 passing), listed .kiro/specs/.hooks/.steering contents, and read the hook JSON to confirm its Stop trigger.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q` while verifying claims for the document: 108 passed, 2 warnings (pre-existing imageio deprecations in tests/test_render.py). No test or code change this turn; the run was verification only.
