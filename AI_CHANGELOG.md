@@ -249,3 +249,23 @@
 ### Testing
 - Ran `python src/run_eval.py` this turn (full 30-seed sweep): regenerated `out/results.md`. The winner column now shows `tie` in 5 of 9 settings and names a planner where intervals separate (e.g. ft=3/cp=0.5 -> occlusion 52.9 +/- 3.8 vs leastcov 65.3 +/- 6.9; ft=3/cp=1.0 -> leastcov 17.4 +/- 0.2 vs occlusion 19.3 +/- 1.4). Summary line: "Across 9 settings: clear wins by planner (occlusion 2, leastcov 2, nearretry 0); ties 5."
 - Ran `.venv/bin/python -m pytest -q` this turn: 50 passed, 2 warnings.
+
+## 2026-10-24 - Remove stray virtualenvs (# and Intel) and gitignore them
+
+### Changes
+- Removed two accidental virtualenvs committed at the repo root, `#/` and `Intel/`, from both version control and disk. They were leftover `python3.12 -m venv` environments (confirmed via each `pyvenv.cfg`), not project code; the real environment is `.venv/`.
+- Added ignore rules so a future stray venv with either name is not re-added.
+
+### Files Modified
+- `.gitignore` — added `/#/` and `/Intel/` under a comment noting they are stray virtualenvs.
+- `#/` and `Intel/` — deleted. 982 tracked files staged as deletions via `git rm -r`; the remaining untracked `.pyc` caches (406 per dir) were removed with `rm -rf`, and the directory shells are gone from disk.
+
+### Technical Details
+- Used `git rm -r '#' Intel` to stage the deletions, which removed the tracked files but left untracked bytecode caches behind; those were cleaned up with `rm -rf '#' Intel`.
+- Anchored the ignore patterns to the repo root (`/#/`, `/Intel/`) so they match only these top-level dirs, not any nested path.
+- This removes the venvs going forward only; they remain in prior commit history. Purging them from history would require a destructive rewrite (git filter-repo + force-push) and was intentionally NOT done.
+- Verified after the change: 0 files remain tracked under either path, both directories are gone from disk, and `git check-ignore` confirms `#/` and `Intel/` are now ignored.
+- Not committed or staged by me beyond the `git rm` staging inherent to the removal; `.venv/` and the project source are untouched. No commit was made.
+
+### Testing
+- No code tests were run this turn (no source code changed). Verification was limited to git/filesystem checks described above: staged deletions = 982, tracked files under the paths = 0, both dirs absent from disk, and both paths reported ignored by `git check-ignore`.

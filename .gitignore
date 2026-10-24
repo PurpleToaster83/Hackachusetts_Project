@@ -2,3 +2,7 @@
 out/
 __pycache__/
 .DS_Store
+
+# Stray virtualenvs accidentally created in the repo root
+/#/
+/Intel/
