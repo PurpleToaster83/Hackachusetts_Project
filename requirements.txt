@@ -1,0 +1,7 @@
+numpy
+pandas
+matplotlib
+imageio
+imageio-ffmpeg
+pygame
+pytest

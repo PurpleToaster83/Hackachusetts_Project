@@ -269,3 +269,27 @@
 
 ### Testing
 - No code tests were run this turn (no source code changed). Verification was limited to git/filesystem checks described above: staged deletions = 982, tracked files under the paths = 0, both dirs absent from disk, and both paths reported ignored by `git check-ignore`.
+
+## 2026-10-24 - Add requirements.txt, make src a package, write project README
+
+### Changes
+- Added `requirements.txt` at the repo root listing the runtime and test dependencies.
+- Added an empty `src/__init__.py` so `src` is a proper importable package.
+- Replaced the root `README.md` with a project README (problem, approach, dataset format, results, limitations, run instructions, structure). Did NOT touch `robotics/README.md` (the hackathon kit file).
+
+### Files Modified
+- `requirements.txt` — new. numpy, pandas, matplotlib, imageio, imageio-ffmpeg, pygame, pytest. No version pins (none needed for tests to pass). Used `pygame` (not `pygame-ce`) because `.venv/bin/pip list` shows `pygame` 2.6.1 installed.
+- `src/__init__.py` — new, empty; marks `src` as a package.
+- `README.md` — rewritten. All result numbers copied verbatim from `out/results.md` (no invented or rounded figures); plots and `out/demo.gif` embedded with relative paths; only commands verified to exist are listed.
+
+### Technical Details
+- conftest.py: left in place but is now redundant. With `src/__init__.py` present, the suite passes without conftest.py (verified by moving it aside and rerunning, then restoring). Not deleted, per instruction.
+- README applies the "different only when 95% intervals don't overlap" rule throughout. Key figures and their `out/results.md` sources: nearest 164.5 ± 17.1 ticks / 34.50 ± 4.41 failed, occlusion 69.4 ± 6.0 / 10.47 ± 1.50, leastcov 66.2 ± 5.6 / 9.70 ± 1.39 (clutter 0.9, 25-item columns); default tie occlusion 40.2 ± 5.0 vs leastcov 40.1 ± 5.0 (sensitivity row 3/0.7); sensitivity summary occlusion 2 / leastcov 2 / ties 5 of 9; ablation pushes_on 69.4 ± 6.0 / 10.47 ± 1.50 / 0.33 ± 0.22 and pushes_off 69.7 ± 5.5 / 10.60 ± 1.38 / 0.00.
+- Dataset-format section documents the `src/log.py` columns (meta: episode/task/frames; data: frame_index, timestamp, state_x/y, holding, action_type, action_x/y, reward, done).
+- Verified the CLI commands via `--help` (`run_eval.py`, `render.py`) and confirmed `compare.py` takes no arguments before listing them in the README.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q` this turn: 50 passed, 2 warnings.
+- Ran the same suite with conftest.py temporarily moved aside this turn: 50 passed (confirming conftest.py is no longer required once `src/__init__.py` exists); conftest.py was restored.
+- Ran `.venv/bin/pip install -r requirements.txt --dry-run` this turn: resolves cleanly; all satisfied except `imageio-ffmpeg-0.6.0`, which pip reports it "would install".
+- Confirmed all README-referenced artifacts exist: `out/plots/{ticks_vs_items,failed_vs_items,sensitivity,ablation}.png` and `out/demo.gif`.
