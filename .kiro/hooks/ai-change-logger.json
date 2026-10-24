@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "AI Change Logger",
+      "trigger": "Stop",
+      "description": "After each agent turn, inspects the git diff and appends a dated summary of the agent's own code changes to AI_CHANGELOG.md in the repo root.",
+      "action": {
+        "type": "agent",
+        "prompt": "You just finished an agent turn. Document the meaningful code changes YOU made this turn by appending an entry to AI_CHANGELOG.md in the repository root. Follow these steps precisely.\n\nSTEP 1 — Inspect the diff\n- Run `git status --porcelain` and `git diff HEAD` (plus `git diff --staged` if relevant) to see what changed.\n- Identify only the files YOU created, modified, or deleted during this turn. Ignore changes that were already present and made by the user.\n\nSTEP 2 — Decide whether to log\n- If you made NO project changes this turn, STOP. Do not write anything. Do not create an empty entry.\n- Exclude AI_CHANGELOG.md itself from consideration — never log changes to the changelog.\n- If the only changes are to AI_CHANGELOG.md, STOP and write nothing.\n\nSTEP 3 — Avoid duplicates\n- Read the existing AI_CHANGELOG.md (if it exists). If the current changes are already documented in a recent entry, do not add a duplicate entry.\n\nSTEP 4 — Append the entry\n- Append (never overwrite) a new entry to AI_CHANGELOG.md. Preserve all existing history.\n- If AI_CHANGELOG.md does not exist, create it, then add the entry.\n- Group changes by feature or functionality.\n- Use today's date in YYYY-MM-DD format.\n\nUse exactly this Markdown structure:\n\n## YYYY-MM-DD - Short description\n\n### Changes\n- What changed and why.\n\n### Files Modified\n- `filename` — explanation.\n\n### Technical Details\n- Important implementation details, bug fixes, and architectural decisions.\n\n### Testing\n- Tests performed and their ACTUAL results.\n\nSTRICT RULES\n- Append new entries only; never overwrite previous history.\n- Do NOT log changes made by the user — only your own changes.\n- Do NOT log changes to AI_CHANGELOG.md itself.\n- Do NOT create empty entries when no project changes occurred.\n- Do NOT modify any project source code while generating the changelog. The only file you may write is AI_CHANGELOG.md.\n- Never claim a test passed unless it was actually run this turn. If no tests were run, say so honestly (e.g. \"No tests were run this turn.\").\n- Avoid duplicate entries.\n- Never stage or commit changes (no `git add`, `git commit`, etc.). Read-only git commands for inspecting the diff are fine."
+      },
+      "enabled": true
+    }
+  ]
+}
