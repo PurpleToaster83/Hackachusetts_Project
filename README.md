@@ -7,10 +7,8 @@ on the same randomized scenes.
 
 ## Demo
 
-- **Live app:**
-Cloud URL --> `https://hackachusettsproject-cl4ytufkfrwnzskaa9z7vy.streamlit.app/`
-- **Video walkthrough:**
-`https://youtu.be/dPe4XmSiyoU`
+- **Live app:** https://hackachusettsproject-cl4ytufkfrwnzskaa9z7vy.streamlit.app/
+- **Video walkthrough:** https://youtu.be/dPe4XmSiyoU
 
 The live app is the interactive demo (Live View, Results, and tick-by-tick
 replay). To run it locally instead:
@@ -164,7 +162,7 @@ messy_desk/
   app/
     streamlit_app.py  # Streamlit UI: Live View, Results, replay
     logic.py          # headless app logic (planner factories, trials, replay)
-    requirements.txt  # app-only extra deps (streamlit)
+    requirements.txt  # app-only extra deps (streamlit + matplotlib + pandas + pillow)
   tests/           # one test file per module
   out/             # generated plots, datasets, videos (gitignored)
   requirements.txt
