@@ -118,6 +118,12 @@ def _shoelace_area(poly: list[tuple[float, float]]) -> float:
     return abs(s) / 2.0
 
 
+# Signed-distance tolerance (pixels^2 scale) for deciding "on the clip edge".
+# Points within this band of an edge are treated as exactly on it, so a vertex
+# that lands on a clip boundary does not spawn a redundant intersection vertex.
+_ON_EDGE_EPS: float = 1e-9
+
+
 def _clip_convex(
     subject: list[tuple[float, float]], clip: list[tuple[float, float]]
 ) -> list[tuple[float, float]]:
@@ -125,6 +131,13 @@ def _clip_convex(
 
     Returns the vertices of the intersection polygon (possibly empty). Both
     inputs must be convex and counter-clockwise.
+
+    An intersection point is inserted ONLY when the two endpoints of a subject
+    edge lie strictly on opposite sides of the clip edge. When an endpoint lies
+    on the clip edge (within :data:`_ON_EDGE_EPS`) it is treated as inside and
+    no separate crossing point is added, which avoids the duplicate / degenerate
+    vertices that a ``>= 0`` test produces when a vertex sits exactly on an
+    edge. Consecutive duplicate vertices are collapsed as a final guard.
     """
     output = list(subject)
     n = len(clip)
@@ -135,8 +148,9 @@ def _clip_convex(
         cx2, cy2 = clip[(i + 1) % n]
         ex, ey = cx2 - cx1, cy2 - cy1  # clip edge direction
 
-        def inside(p: tuple[float, float]) -> float:
-            # >= 0 means left of (or on) the CCW edge, i.e. inside.
+        def side(p: tuple[float, float]) -> float:
+            # > 0 strictly left (inside) of the CCW edge, < 0 strictly right,
+            # ~0 on the edge.
             return ex * (p[1] - cy1) - ey * (p[0] - cx1)
 
         inp = output
@@ -145,15 +159,46 @@ def _clip_convex(
         for j in range(m):
             cur = inp[j]
             prv = inp[j - 1]
-            d_cur = inside(cur)
-            d_prv = inside(prv)
-            if d_cur >= 0:
-                if d_prv < 0:
-                    output.append(_edge_intersect(prv, cur, (cx1, cy1), (cx2, cy2)))
+            d_cur = side(cur)
+            d_prv = side(prv)
+            cur_in = d_cur >= -_ON_EDGE_EPS   # inside or on the edge
+            prv_in = d_prv >= -_ON_EDGE_EPS
+            # Only a STRICT crossing (one strictly outside, the other strictly
+            # inside) needs an intersection vertex. On-edge endpoints do not.
+            crossing = (d_cur > _ON_EDGE_EPS and d_prv < -_ON_EDGE_EPS) or (
+                d_cur < -_ON_EDGE_EPS and d_prv > _ON_EDGE_EPS
+            )
+            if cur_in:
+                if crossing:
+                    output.append(
+                        _edge_intersect(prv, cur, (cx1, cy1), (cx2, cy2))
+                    )
                 output.append(cur)
-            elif d_prv >= 0:
-                output.append(_edge_intersect(prv, cur, (cx1, cy1), (cx2, cy2)))
-    return output
+            elif crossing:
+                output.append(
+                    _edge_intersect(prv, cur, (cx1, cy1), (cx2, cy2))
+                )
+    return _dedupe_consecutive(output)
+
+
+def _dedupe_consecutive(
+    poly: list[tuple[float, float]], eps: float = 1e-7
+) -> list[tuple[float, float]]:
+    """Drop vertices that coincide with the previous one (and wrap-around)."""
+    if not poly:
+        return poly
+    out: list[tuple[float, float]] = [poly[0]]
+    for px, py in poly[1:]:
+        qx, qy = out[-1]
+        if abs(px - qx) > eps or abs(py - qy) > eps:
+            out.append((px, py))
+    # Collapse a closing duplicate (last == first).
+    if len(out) > 1:
+        fx, fy = out[0]
+        lx, ly = out[-1]
+        if abs(fx - lx) <= eps and abs(fy - ly) <= eps:
+            out.pop()
+    return out
 
 
 def _edge_intersect(p1, p2, q1, q2) -> tuple[float, float]:

@@ -136,7 +136,8 @@ def _item_states(scene: Scene) -> list[ItemState]:
 
 
 def build_trace(
-    planner_name: str, seed: int, n_items: int, clutter: float
+    planner_name: str, seed: int, n_items: int, clutter: float,
+    rotate: bool = False,
 ) -> Trace:
     """Replay one planner on a fresh scene, recording a per-tick trace.
 
@@ -147,8 +148,12 @@ def build_trace(
     "settled" tick frame after travel; travel itself is interpolated at draw
     time, so the trace stores the start/target gripper positions implicitly via
     consecutive frames.
+
+    ``rotate`` (experimental) forwards to :func:`make_scene`: when True the
+    scene's items get rotated-rectangle footprints. It must match the ``rotate``
+    passed to the paired ``run_episode``/``make_scene`` so outcomes agree.
     """
-    scene = make_scene(seed=seed, n_items=n_items, clutter=clutter)
+    scene = make_scene(seed=seed, n_items=n_items, clutter=clutter, rotate=rotate)
     planner = PLANNER_FACTORIES[planner_name](seed)
     rng = np.random.default_rng(seed)
 

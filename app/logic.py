@@ -116,16 +116,20 @@ def clamp_n_items(n_items: int) -> int:
     return int(min(max(n_items, N_ITEMS_MIN), N_ITEMS_MAX))
 
 
-def build_scene(seed: int, n_items: int, clutter: float) -> Scene:
+def build_scene(
+    seed: int, n_items: int, clutter: float, rotate: bool = False
+) -> Scene:
     """Build one Scene via ``make_scene``, clamping inputs first.
 
     ``clutter`` is clamped to [0, 1] and ``n_items`` to the supported range
     [0, 30] (the UI exposes 3-30). Geometry is in pixels on a 640x480 desk.
+    ``rotate`` (experimental) forwards to ``make_scene`` for rotated footprints.
     """
     return make_scene(
         seed=seed,
         n_items=clamp_n_items(n_items),
         clutter=clamp_clutter(clutter),
+        rotate=rotate,
     )
 
 
@@ -145,6 +149,7 @@ class TrialConfig:
     seed: int
     n_items: int
     clutter: float
+    rotate: bool = False  # EXPERIMENTAL: rotated-rectangle footprints when True
 
 
 @dataclass
@@ -155,6 +160,7 @@ class ExperimentConfig:
     clutter: float  # in [0, 1] (clamped on use)
     seeds: list[int]
     planners: list[str]
+    rotate: bool = False  # EXPERIMENTAL: rotated footprints when True
 
 
 @dataclass
@@ -243,7 +249,9 @@ def run_trial(config: TrialConfig) -> EpisodeResult:
     ``EpisodeResult`` because the scene, the planner, and the grasp-outcome
     draws are all seeded from ``config.seed``.
     """
-    scene = build_scene(config.seed, config.n_items, config.clutter)
+    scene = build_scene(
+        config.seed, config.n_items, config.clutter, rotate=config.rotate
+    )
     planner = make_planner(config.planner_name, config.seed)
     return run_episode(scene, planner, seed=config.seed)
 
@@ -305,6 +313,7 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
                 seed=seed,
                 n_items=config.n_items,
                 clutter=config.clutter,
+                rotate=config.rotate,
             )
             rows.append(TrialRow(config=trial, result=run_trial(trial)))
 
@@ -484,11 +493,15 @@ def replay_trial(config: TrialConfig) -> ReplayResult:
     clutter = clamp_clutter(config.clutter)
 
     trace: Trace = build_trace(
-        config.planner_name, seed=config.seed, n_items=n_items, clutter=clutter
+        config.planner_name, seed=config.seed, n_items=n_items, clutter=clutter,
+        rotate=config.rotate,
     )
 
     # Paired aggregate from the authoritative runner (fresh scene + planner).
-    scene = make_scene(seed=config.seed, n_items=n_items, clutter=clutter)
+    # Same seed AND same rotate as the trace, so the two agree.
+    scene = make_scene(
+        seed=config.seed, n_items=n_items, clutter=clutter, rotate=config.rotate
+    )
     planner = make_planner(config.planner_name, config.seed)
     result = run_episode(scene, planner, seed=config.seed)
 
