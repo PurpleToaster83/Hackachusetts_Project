@@ -207,3 +207,45 @@
 - Occlusion vs LeastCovered: occlusion wins outright in the harsher-penalty sensitivity rows (e.g. ft=5/cp=0.5: occlusion 55.2 +/- 4.0 vs leastcov 91.8 +/- 26.2); tie at default ft=3/cp=0.7; leastcov wins when cp=1.0. Ranking does not hold across all settings — by design, occlusion's edge appears when crowding is penalized.
 - Pushes do fire but rarely: ablation pushes_on averaged 0.60 +/- 0.78 pushes/episode at 25 items/clutter 0.9 (pushes_off 0.00); disabling pushes cost ~4 ticks and ~1 extra failed grasp per episode at this sample size.
 - Confirmed Agg backend and no pygame import at runtime this turn.
+
+## 2026-10-24 - Add render.py demo renderer (side-by-side pygame video)
+
+### Changes
+- Added `src/render.py`, the demo renderer (build order step 6) and the only module that imports pygame. It replays planners on one seed and writes an animated side-by-side video.
+- Added `tests/test_render.py` with a replay-correctness check and a headless smoke render.
+
+### Files Modified
+- `src/render.py` — new module. CLI: `--seed`, `--n-items 15`, `--clutter 0.9`, `--planners random,occlusion`, `--out out/demo.mp4`, `--headless`. Runs each named planner on the same seed and draws them in one row: desk, items as colored rectangles with letter labels (P/K/M/T) in z-order, labelled container boxes at the right edge, gripper as a circle, and a per-panel status line (planner, tick, sorted, failed, pushes). Animates each tick with interpolated gripper motion and highlights grasp (green ring), failed grasp (red item flash), and push (amber ring). Encodes with imageio to mp4, falling back to gif on failure.
+- `tests/test_render.py` — new test file (2 tests): `build_trace` reproduces the sim's sorted/failed/push counts for a seed; a headless render of a small scene writes a non-empty `.mp4`-or-`.gif` file.
+
+### Technical Details
+- Keeps pygame out of the headless core: pygame is imported locally inside `_render_pygame`/`_draw_panel_pygame`, never at module top level. `--headless` sets `SDL_VIDEODRIVER=dummy` via `os.environ.setdefault` before `pygame.init()`, so no window opens.
+- Replay fidelity (honesty rule): `build_trace` mirrors `run_episode` step for step — same `numpy.random.default_rng(seed)` draw order, same `effective_grasp_prob` grasp model, same `push` primitive, same tick accounting (travel ticks by distance, failed grasp adds `FAILED_GRASP_TICKS`). The animation therefore reproduces the real episode outcome rather than inventing one; `test_build_trace_matches_sim_outcome` asserts the final counters equal the sim's.
+- Side-by-side sync: `_frame_pairs` yields `FRAMES_PER_TICK` (2) interpolation steps between tick frames and holds the final frame when one planner's run is shorter, so both panels share a video length.
+- pygame surface is converted to RGB numpy via `pygame.surfarray.array3d` + transpose (pygame is width-major, numpy row-major).
+- Fallback path: if pygame cannot be imported, `_render_matplotlib` (Agg backend) draws the same logical content (desk, containers, labelled items, gripper, status title) so the demo still renders without pygame.
+- Encoding: `write_video` tries the requested path (mp4) first; on any encoder error it logs and retries with a `.gif` of the same stem. mp4 uses `fps`; the gif (pillow) writer takes per-frame `duration` in ms (`1000/FPS`), which also cleared an imageio `fps`-deprecation warning.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q` this turn: 50 passed (48 prior + 2 new); warnings dropped from 3 to 2 after switching the gif writer to `duration` (remaining warnings are unrelated imageio plugin notices).
+- Ran `python src/render.py --headless --seed 3 --out out/demo.mp4` this turn: used pygame via the SDL dummy driver; mp4 encoding failed with ValueError because this environment has no ffmpeg backend (no `imageio_ffmpeg` installed), so it fell back to `out/demo.gif` at 122,610 bytes (~120 KB).
+- Verified the rendered frame visually: both `random` and `occlusion` panels on seed 3 show the desk, z-ordered labelled items, right-edge containers, the gripper circle, and the status line.
+- Note: mp4 output requires an ffmpeg backend that is not installed here; `.mp4` requests always fall back to `.gif` in this environment by design. Installing `imageio-ffmpeg` would enable mp4 (a new dependency, not added without asking).
+
+## 2026-10-24 - Interval-aware winner column in the sensitivity table
+
+### Changes
+- Changed the sensitivity table in `src/run_eval.py` so the `winner` column reports `tie` when the 95% intervals of the two best planners overlap, instead of always naming the lowest mean.
+- Replaced the single "Best planner is leastcov in the first setting..." sentence with a per-planner count of clear wins plus the number of ties across all settings.
+
+### Files Modified
+- `src/run_eval.py` — added `_sensitivity_winner(row, names)` helper; rewired the results-markdown loop to use it, tally clear wins per planner and ties, and emit the new summary line; updated the column-description sentence to explain the tie rule.
+
+### Technical Details
+- Winner rule: planners are ordered by mean ticks-to-clear (lower is better). The best and second-best are declared a `tie` when their 95% intervals overlap, i.e. `best.mean + best.ci >= second.mean - second.ci` (the best already has the smaller mean). Otherwise the lowest-mean planner's name is returned.
+- Summary line now reads, e.g., "Across 9 settings: clear wins by planner (occlusion 2, leastcov 2, nearretry 0); ties 5." Counts are computed from the same per-row decision, so the table and summary cannot disagree.
+- Only the sensitivity section changed; the ticks/failed tables and the ablation table are untouched. All numbers still come from the real sweep.
+
+### Testing
+- Ran `python src/run_eval.py` this turn (full 30-seed sweep): regenerated `out/results.md`. The winner column now shows `tie` in 5 of 9 settings and names a planner where intervals separate (e.g. ft=3/cp=0.5 -> occlusion 52.9 +/- 3.8 vs leastcov 65.3 +/- 6.9; ft=3/cp=1.0 -> leastcov 17.4 +/- 0.2 vs occlusion 19.3 +/- 1.4). Summary line: "Across 9 settings: clear wins by planner (occlusion 2, leastcov 2, nearretry 0); ties 5."
+- Ran `.venv/bin/python -m pytest -q` this turn: 50 passed, 2 warnings.

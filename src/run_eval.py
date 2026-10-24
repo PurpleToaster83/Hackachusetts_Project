@@ -314,6 +314,22 @@ class SensRow:
     ticks: dict[str, Stat]
 
 
+def _sensitivity_winner(row: SensRow, names: list[str]) -> str:
+    """Return the lowest-mean planner, or ``"tie"`` on overlapping intervals.
+
+    Ranks ``names`` by mean ticks-to-clear (lower is better). If the best and
+    second-best planners' 95% intervals overlap -- the best's upper bound
+    (``mean + ci``) reaches the second's lower bound (``mean - ci``) -- the
+    difference is not resolved at this sample size and the result is ``"tie"``.
+    Otherwise the single lowest-mean planner's name is returned.
+    """
+    ordered = sorted(names, key=lambda nm: row.ticks[nm].mean)
+    best, second = row.ticks[ordered[0]], row.ticks[ordered[1]]
+    if best.mean + best.ci >= second.mean - second.ci:
+        return "tie"
+    return ordered[0]
+
+
 def sweep_sensitivity(seeds: range) -> list[SensRow]:
     """Sweep FAILED_GRASP_TICKS x CLEARANCE_PENALTY at 15 items, clutter 0.9.
 
@@ -482,7 +498,8 @@ def write_results_md(
     lines.append("")
     lines.append(
         "Varying `FAILED_GRASP_TICKS` and `CLEARANCE_PENALTY` by argument "
-        "(globals untouched). `winner` is the lowest mean ticks in the row."
+        "(globals untouched). `winner` names the lowest-mean planner, or "
+        "`tie` when the 95% intervals of the best two overlap."
     )
     lines.append("")
     sens_names = [n for n, _ in SENS_PLANNERS]
@@ -492,14 +509,14 @@ def write_results_md(
         + " | winner |"
     )
     lines.append("|" + "---|" * (3 + len(sens_names)))
-    ranking_holds = True
-    baseline_winner: str | None = None
+    tie_count = 0
+    clear_wins: dict[str, int] = {nm: 0 for nm in sens_names}
     for r in sens_rows:
-        winner = min(sens_names, key=lambda nm: r.ticks[nm].mean)
-        if baseline_winner is None:
-            baseline_winner = winner
-        elif winner != baseline_winner:
-            ranking_holds = False
+        winner = _sensitivity_winner(r, sens_names)
+        if winner == "tie":
+            tie_count += 1
+        else:
+            clear_wins[winner] += 1
         cols = [r.ticks[nm].fmt(1) for nm in sens_names]
         lines.append(
             f"| {r.failed_ticks} | {r.clearance} | "
@@ -507,13 +524,12 @@ def write_results_md(
             + f" | {winner} |"
         )
     lines.append("")
+    win_summary = ", ".join(
+        f"{nm} {clear_wins[nm]}" for nm in sens_names
+    )
     lines.append(
-        f"Best planner is **{baseline_winner}** in the first setting; the "
-        + (
-            "same planner wins every setting (ranking holds)."
-            if ranking_holds
-            else "winner changes across settings (ranking does NOT hold)."
-        )
+        f"Across {len(sens_rows)} settings: clear wins by planner "
+        f"({win_summary}); ties {tie_count}."
     )
     lines.append("")
 

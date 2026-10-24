@@ -22,3 +22,15 @@ Open data.csv in a spreadsheet, or run fetch.py for a fresh response from the di
 **How robust is it?** We varied the failed-grasp penalty and the crowding penalty. [The ranking held / changed when ...]. All constants were fixed before running the comparison and were not tuned afterwards.
 
 **Limits:** this is a 2D simulation with a hand-written grasp model. It uses no real vision or hardware, and the kit data supplied only instruction phrasing and episode scale. The ranking of planners could change under different grasp physics.
+
+-----------------
+
+30 random desks per setting. Values are mean ± 95% interval; I call two results different only when their intervals don't overlap.
+
+**Occlusion-awareness matters.** At clutter 0.9 with 25 items, the occlusion-aware planner clears the desk in 69 ± 6 ticks with 10.5 failed grasps. Nearest-first needs 165 ± 17 ticks and 34.5 failed grasps, and random needs 113 ± 10 ticks and 15.4 failed grasps. At low clutter and small sizes, planners are indistinguishable.
+
+**A simple rule does almost as well.** A greedy planner that always grabs the least-covered item matches our occlusion-aware planner at the default settings (66 ± 6 vs 69 ± 6 ticks). Our planner's advantage shows up only when crowded items are heavily penalized: in the sensitivity sweep it clearly wins 2 of 9 settings, `LeastCovered` clearly wins 2, and 5 are ties.
+
+**Singulation did not help here.** Allowing the planner to push blockers aside changed ticks to clear from 69.7 ± 5.5 to 69.4 ± 6.0, with 0.33 pushes per desk. With our grasp model, choosing which item to grab matters far more than moving things.
+
+**Limits.** This is a 2D simulation with a hand-written grasp model and penalty constants we chose before running the comparison. Different physics could change the ranking.
