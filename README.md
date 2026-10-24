@@ -123,7 +123,6 @@ messy_desk/
     run_eval.py    # sweeps, plots, and out/results.md
     render.py      # pygame demo video (the only module that imports pygame)
   tests/           # one test file per module
-  robotics/        # read-only starter-kit data (instruction phrasing, scale)
   out/             # generated plots, datasets, videos (gitignored)
   requirements.txt
   README.md

@@ -23,17 +23,10 @@ from pathlib import Path
 
 import numpy as np
 
-from src.planner import (
-    DEFAULT_LEARNED_WEIGHTS,
-    LeastCoveredPlanner,
-    LearnedPlanner,
-    NearestPlanner,
-    NearestRetryPlanner,
-    OcclusionPlanner,
-    RandomPlanner,
-)
+from src.planner import DEFAULT_LEARNED_WEIGHTS, LearnedPlanner
 from src.scene import DESK_H, DESK_W, Scene, make_scene
 from src.sim import EpisodeResult, run_episode
+from src.trace import PLANNER_FACTORIES as _CORE_FACTORIES
 from src.trace import Trace, build_trace
 
 # --------------------------------------------------------------------------- #
@@ -52,19 +45,14 @@ Z_95: float = 1.96
 # --------------------------------------------------------------------------- #
 # Planner registry (no render.py import)
 # --------------------------------------------------------------------------- #
-# Name -> (seed) -> planner. Mirrors the factories in render.py WITHOUT
-# importing render.py, so the logic layer stays headless. Only RandomPlanner
-# consumes the seed; the others are deterministic given the scene.
-# The selectable learned planner uses the optimized weights from
-# ``src.planner.DEFAULT_LEARNED_WEIGHTS`` -- the SINGLE source of truth shared
+# The five parameterless planners are defined ONCE in ``src.trace`` and reused
+# here (no duplicate lambda list that could drift). The app adds the selectable
+# learned planner, which uses the optimized weights from
+# ``src.planner.DEFAULT_LEARNED_WEIGHTS`` -- the single source of truth shared
 # with the batch runner and the replay/render path, so Live View and Results
-# always run the same policy.
+# always run the same policy. UI order: the core planners, then learned.
 _PLANNER_FACTORIES: dict[str, object] = {
-    "random": lambda seed: RandomPlanner(seed=seed),
-    "nearest": lambda seed: NearestPlanner(),
-    "leastcov": lambda seed: LeastCoveredPlanner(),
-    "nearretry": lambda seed: NearestRetryPlanner(),
-    "occlusion": lambda seed: OcclusionPlanner(),
+    **_CORE_FACTORIES,
     "learned": lambda seed: LearnedPlanner(DEFAULT_LEARNED_WEIGHTS),
 }
 
@@ -333,13 +321,13 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
 # --------------------------------------------------------------------------- #
 # Output-location guard
 # --------------------------------------------------------------------------- #
-# Generated artifacts live only under this directory (gitignored). Inputs under
-# data/ and robotics/ are never written.
+# Generated artifacts live only under this directory (gitignored). The read-
+# only data/ input tree is never written.
 OUT_DIR: Path = Path("out")
 
 # Read-only top-level input trees the app must never write into. A relative
 # path beginning with one of these names targets an input tree, not out/.
-_READ_ONLY_ROOTS: frozenset[str] = frozenset({"data", "robotics"})
+_READ_ONLY_ROOTS: frozenset[str] = frozenset({"data"})
 
 
 def resolve_output_path(path: str | Path) -> Path:
@@ -347,8 +335,8 @@ def resolve_output_path(path: str | Path) -> Path:
 
     Returns the resolved absolute path when it lies inside the repository's
     ``out/`` tree. Raises ``ValueError`` for any path that would escape ``out/``
-    or that targets a read-only input tree (``data/`` or ``robotics/``), so the
-    app can never write outside ``out/``.
+    or that targets the read-only ``data/`` input tree, so the app can never
+    write outside ``out/``.
 
     A relative path is interpreted against ``out/``, except that a relative path
     whose first segment names a read-only input tree is rejected outright, since

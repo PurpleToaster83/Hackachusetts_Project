@@ -21,6 +21,7 @@ from __future__ import annotations
 # `src` resolve in either environment.
 import os
 import sys
+import time
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -368,8 +369,6 @@ def _render_live_view(result: logic.ExperimentResult) -> None:
     # delay by the chosen speed. Base rate is 15 fps (1/15 s per frame at 1x);
     # 2x halves the delay, 0.5x doubles it. Stop at the last frame.
     if st.session_state.get(_PLAYING_KEY) and frame_i < n - 1:
-        import time
-
         st.session_state[_FRAME_KEY] = min(n - 1, frame_i + 1)
         time.sleep((1.0 / 15.0) / float(speed))
         st.rerun()

@@ -806,3 +806,41 @@
 ### Testing
 - Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Unchanged, zero failures.
 - Confirmed the module parses, verified the per-speed delay math, and confirmed `git diff main -- src/robot.py src/planner.py src/scene.py src/sim.py` prints nothing (engine/physics untouched). Actual playback timing is only observable in a live browser session (not run here).
+
+## 2026-10-24 - CLEANUP (learned-policy branch): consolidate planner registries + tidy imports
+
+### Changes
+- Code hygiene: removed the duplicate planner-factory list so the five parameterless planners are defined once, dropped now-unused imports, moved a lazy import to module top, and cleared throwaway preview images. No engine, physics, behavior, or numbers changed.
+
+### Files Modified
+- `app/logic.py` — `_PLANNER_FACTORIES` now builds from `src.trace.PLANNER_FACTORIES` (`{**_CORE_FACTORIES, "learned": ...}`) instead of re-listing the five lambdas; removed the five now-unused planner imports (kept `LearnedPlanner`).
+- `app/streamlit_app.py` — moved `import time` from inside the Live View playback loop to the module-top stdlib imports.
+
+### Technical Details
+- The app and `src.trace` previously kept two separate planner-factory maps; the learned planner lived only in the app's, which had caused an earlier replay KeyError. Reusing the core map as the single definition removes that drift risk while keeping the core decoupled (it still never imports the app); the app owns only the added "learned" entry and the UI order (core planners then learned). `available_planners()` is unchanged: random, nearest, leastcov, nearretry, occlusion, learned.
+- Also deleted the gitignored `out/live_view_preview/` throwaway PNGs (not tracked; no repo change).
+- Left for the user's decision (not done): committing uncommitted main work, deleting the stale `learned-policy`/`experiment-shapes` branches, the hard-coded `DEFAULT_LEARNED_WEIGHTS` (persist-vs-constant), and whether to delete the unused-but-starter-kit `robotics/` folder.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Unchanged, zero failures.
+- Confirmed both modules parse, `app.logic` imports cleanly with the registry intact and correctly ordered, and engine files (`src/robot.py`, `src/planner.py`, `src/scene.py`, `src/sim.py`, `src/trace.py`) are unchanged vs main.
+
+## 2026-10-24 - CLEANUP (learned-policy branch): remove unused robotics/ starter-kit folder
+
+### Changes
+- Deleted the `robotics/` starter-kit data folder (29 tracked files, ~6.8M) at the user's request, since no code imports or reads it, and updated the live references to it. Deletions are unstaged in the working tree.
+
+### Files Modified
+- `robotics/` — deleted (29 files: README/data.csv/fetch.* across boston-map, boston-streets, bridge-v2, bridges, droid, oxe, qcew).
+- `app/logic.py` — removed `"robotics"` from `_READ_ONLY_ROOTS` (kept `"data"` as a defensive write guard); updated the related comment and docstring.
+- `tests/test_logic.py` — removed the assertion that a `robotics/oxe/data.csv` write is rejected (that path is no longer a guarded tree); kept the `data/` and escape-path assertions.
+- `README.md` — removed the `robotics/` line from the project-structure listing.
+
+### Technical Details
+- Verified before deleting that nothing imports or reads the folder: the only references were the output-guard string, a test path string, and domain-word mentions ("robotics challenge/dataset") describing the project and the BridgeData V2 / DROID dataset FORMAT, not the folder.
+- Left intact deliberately: domain wording in `README.md` and `src/log.py` (still accurate), and historical records — `AI_CHANGELOG.md` entries (append-only) and the `.kiro/specs/messy-desk-lab/` design/requirements/tasks docs (point-in-time records that mention "robotics/ read-only") — since rewriting history would misrepresent what was true at the time.
+- The deletions are unstaged (shown as `D` in git status); finalizing requires `git add -A`/`git rm` + commit, and the data remains in git history until then.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Unchanged, zero failures.
+- Confirmed no `robotics` references remain in live code/tests (only domain words in README/log.py and stale .pyc caches), and `app.logic` imports cleanly with planners intact.

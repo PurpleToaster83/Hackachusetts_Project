@@ -204,12 +204,10 @@ def test_output_guard_accepts_paths_under_out() -> None:
 
 
 def test_output_guard_rejects_paths_outside_out() -> None:
-    """Paths under data/ or robotics/, or escaping out/, are rejected."""
-    # Relative paths targeting a read-only input tree are rejected outright.
+    """Paths under the read-only data/ tree, or escaping out/, are rejected."""
+    # A relative path targeting the read-only data/ input tree is rejected.
     with pytest.raises(ValueError, match="read-only input tree"):
         logic.resolve_output_path("data/bridge-v2/data.csv")
-    with pytest.raises(ValueError, match="read-only input tree"):
-        logic.resolve_output_path("robotics/oxe/data.csv")
     # A path escaping out/ via .. is rejected as outside out/.
     with pytest.raises(ValueError, match="outside out/"):
         logic.resolve_output_path("../escape.txt")
