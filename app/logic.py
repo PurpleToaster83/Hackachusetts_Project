@@ -24,7 +24,9 @@ from pathlib import Path
 import numpy as np
 
 from src.planner import (
+    DEFAULT_LEARNED_WEIGHTS,
     LeastCoveredPlanner,
+    LearnedPlanner,
     NearestPlanner,
     NearestRetryPlanner,
     OcclusionPlanner,
@@ -53,12 +55,17 @@ Z_95: float = 1.96
 # Name -> (seed) -> planner. Mirrors the factories in render.py WITHOUT
 # importing render.py, so the logic layer stays headless. Only RandomPlanner
 # consumes the seed; the others are deterministic given the scene.
+# The selectable learned planner uses the optimized weights from
+# ``src.planner.DEFAULT_LEARNED_WEIGHTS`` -- the SINGLE source of truth shared
+# with the batch runner and the replay/render path, so Live View and Results
+# always run the same policy.
 _PLANNER_FACTORIES: dict[str, object] = {
     "random": lambda seed: RandomPlanner(seed=seed),
     "nearest": lambda seed: NearestPlanner(),
     "leastcov": lambda seed: LeastCoveredPlanner(),
     "nearretry": lambda seed: NearestRetryPlanner(),
     "occlusion": lambda seed: OcclusionPlanner(),
+    "learned": lambda seed: LearnedPlanner(DEFAULT_LEARNED_WEIGHTS),
 }
 
 _PLANNER_DESCRIPTIONS: dict[str, str] = {
@@ -67,6 +74,7 @@ _PLANNER_DESCRIPTIONS: dict[str, str] = {
     "leastcov": "Grasps the least-covered item, breaking ties by distance.",
     "nearretry": "Nearest-first, but skips an item that keeps failing.",
     "occlusion": "Grasps exposed items first; singulates when it pays off.",
+    "learned": "Scores items by learned weights on coverage/distance/crowding.",
 }
 
 
@@ -494,9 +502,12 @@ def replay_trial(config: TrialConfig) -> ReplayResult:
     n_items = clamp_n_items(config.n_items)
     clutter = clamp_clutter(config.clutter)
 
+    # Use the app's own planner factory so planners that need configuration
+    # (e.g. the weighted "learned" planner) are rebuilt for the replay exactly
+    # as the batch runner builds them -- the trace core does not know "learned".
     trace: Trace = build_trace(
         config.planner_name, seed=config.seed, n_items=n_items, clutter=clutter,
-        rotate=config.rotate,
+        rotate=config.rotate, make_planner=make_planner,
     )
 
     # Paired aggregate from the authoritative runner (fresh scene + planner).

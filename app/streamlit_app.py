@@ -191,6 +191,20 @@ def _render_results(result: logic.ExperimentResult) -> None:
         for line in notes:
             st.markdown(f"- {line}")
 
+    # Read-only transparency: when a learned planner is in the run, show its
+    # actual weights. Numbers are read from the single source of truth
+    # (logic.DEFAULT_LEARNED_WEIGHTS, re-exported from src.planner) -- never
+    # hard-coded here -- so this display tracks the constant automatically.
+    if "learned" in result.config.planners:
+        w0, w1, w2 = logic.DEFAULT_LEARNED_WEIGHTS
+        st.caption(
+            "About the learned policy: a linear scoring policy optimized by "
+            "seeded search and evaluated on held-out seeds. "
+            f"Weights: coverage {w0:.4f}, distance {w1:.4f}, crowding {w2:.4f}. "
+            "A negative crowding weight means it learned to clear crowded "
+            "clusters first. Display only — these weights are fixed, not editable."
+        )
+
 
 # --------------------------------------------------------------------------- #
 # Live View

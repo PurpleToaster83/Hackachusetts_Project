@@ -22,6 +22,8 @@ from src.robot import (
     travel_ticks,
 )
 from src.scene import (
+    DESK_H,
+    DESK_W,
     Item,
     Scene,
     covered_fraction,
@@ -307,3 +309,85 @@ class OcclusionPlanner:
         )
         item = scene.item_by_id(least_covered_id)
         return self._push_coverer(scene, item, covered[least_covered_id])
+
+
+# Diagonal of the desk, in pixels; used to normalize the distance feature into
+# roughly [0, 1] so the learned weights are on a comparable scale.
+_DESK_DIAG: float = math.hypot(DESK_W, DESK_H)
+
+# Number of features the LearnedPlanner scores. Keep in sync with
+# ``item_features`` and the weight-search dimension.
+LEARNED_N_FEATURES: int = 3
+
+# The optimized LearnedPlanner weights (w0=coverage, w1=distance, w2=crowding).
+# SINGLE SOURCE OF TRUTH: every path that wants the trained policy -- the app
+# planner registry and the LearnedPlanner default -- reads this one constant so
+# the batch runner and the replay/render path can never diverge. Produced by
+# the reproducible search in ``src.learn`` (search_seed=0, 15 items, clutter
+# 0.9, 20 train / 20 held-out seeds, 200 iters).
+DEFAULT_LEARNED_WEIGHTS: tuple[float, ...] = (0.1175, 0.0888, -0.7255)
+
+
+def item_features(scene: Scene, gripper: Gripper, item: Item) -> tuple[float, ...]:
+    """Feature vector for one candidate item, from existing engine helpers.
+
+    All features reuse the engine's own geometry -- no new physics:
+
+    1. ``covered_fraction`` in [0, 1] (how occluded the item is).
+    2. normalized gripper distance in [0, ~1] (``_distance`` / desk diagonal).
+    3. normalized crowding in [0, 1] (crowding-neighbour count / remaining items).
+
+    Lower values are "easier/closer/clearer"; the learned weights decide how to
+    trade them off.
+    """
+    cov = covered_fraction(scene, item.id)
+    dist = _distance(gripper, item) / _DESK_DIAG
+    n_other = max(len(scene.items) - 1, 1)
+    crowd = len(crowding_neighbors(scene, item.id, CLEARANCE_MARGIN)) / n_other
+    return (cov, dist, crowd)
+
+
+class LearnedPlanner:
+    """Grasps the item with the best learned weighted-feature score.
+
+    Scores every remaining item as ``dot(weights, item_features(...))`` and
+    grasps the LOWEST-scoring item (features are "cost-like": lower coverage,
+    distance, and crowding are better), breaking ties by item id. Grasp-only,
+    like :class:`NearestPlanner`/:class:`LeastCoveredPlanner`; it adds no new
+    physics and reuses :func:`item_features`.
+
+    The weights are a fixed policy supplied at construction (e.g. found by the
+    weight search in :mod:`src.learn`). With fixed weights the planner is fully
+    deterministic -- it carries no rng and no mutable state -- so a given scene
+    and gripper always yield the same choice.
+    """
+
+    def __init__(self, weights: tuple[float, ...] | None = None) -> None:
+        """Store the fixed feature weights.
+
+        Defaults to :data:`DEFAULT_LEARNED_WEIGHTS` (the optimized policy) when
+        ``weights`` is None, so an unparameterized LearnedPlanner runs the
+        trained policy rather than an arbitrary all-ones one.
+        """
+        if weights is None:
+            weights = DEFAULT_LEARNED_WEIGHTS
+        if len(weights) != LEARNED_N_FEATURES:
+            raise ValueError(
+                f"expected {LEARNED_N_FEATURES} weights, got {len(weights)}"
+            )
+        self.weights: tuple[float, ...] = tuple(float(w) for w in weights)
+
+    def _score(self, scene: Scene, gripper: Gripper, item: Item) -> float:
+        """Weighted-feature score for one item (lower is preferred)."""
+        feats = item_features(scene, gripper, item)
+        return sum(w * f for w, f in zip(self.weights, feats))
+
+    def next_action(self, scene: Scene, gripper: Gripper) -> Grasp | None:
+        """Grasp the lowest-scoring remaining item, or None if the desk is clear."""
+        if not scene.items:
+            return None
+        target = min(
+            scene.items,
+            key=lambda it: (self._score(scene, gripper, it), it.id),
+        )
+        return Grasp(item_id=target.id)

@@ -625,3 +625,82 @@
 ### Testing
 - Ran `.venv/bin/python -m pytest -q`: 135 passed, 2 warnings (pre-existing imageio deprecations). Unchanged count, confirming rendering-only.
 - Rendered and visually inspected a polygon-mode Live View frame: keys draw as hexagons, mugs as rounded octagons, trash as an irregular blob, pens as tilted rectangles; a box-mode frame still renders boxes. Previews written under out/ (gitignored). Confirmed axis-aligned items all keep shape="box".
+
+## 2026-10-24 - FEATURE (learned-policy branch): LearnedPlanner + weight search
+
+### Changes
+- On a new `learned-policy` branch, added a LearnedPlanner that scores items by a weighted sum of existing engine features and a reproducible weight search that trains on TRAINING seeds and evaluates the fixed policy on disjoint HELD-OUT seeds against the five hand-written planners. LearnedPlanner is selectable in the app. Axis-aligned default and all existing planner behavior are unchanged; grasp-probability constants are untouched.
+
+### Files Modified
+- `src/planner.py` — added `item_features` (covered_fraction, normalized distance, crowding — all existing helpers), `LearnedPlanner` (fixed weights, grasp-only, deterministic, no rng/state), `LEARNED_N_FEATURES`; added DESK_W/DESK_H to the scene import.
+- `src/learn.py` — new weight-search module: seeded evolutionary hill-climb on training seeds, held-out evaluation vs the five baselines, disjoint `split_seeds`, reproducible `run()`, and a CLI (`python -m src.learn`).
+- `app/logic.py` — registered "learned" in the planner registry/descriptions with a documented default weight set `LEARNED_DEFAULT_WEIGHTS=(1,1,1)`.
+- `tests/test_learned.py` — new tests (determinism given fixed weights, feature bounds, search reproducibility, non-regressing hill-climb, disjoint split, held-out coverage, app selectability).
+- `tests/test_logic.py` — updated `test_available_planners_is_stable` to include "learned".
+
+### Technical Details
+- Features are cost-like (lower = easier/nearer/clearer); LearnedPlanner grasps the lowest-scoring item, ties by id. With fixed weights it carries no rng and no mutable state, so it is deterministic per scene/seed. Reuses only existing engine geometry — no new physics.
+- The search optimizes mean ticks-to-clear from the real `run_episode`; training and held-out seed sets are disjoint; the held-out policy uses the fixed trained weights with no further fitting. All randomness flows from `search_seed`, so a run is reproducible.
+- The five hand-written planners are unchanged (LearnedPlanner is additive); `src/robot.py` grasp constants have an empty diff; axis-aligned default behavior is byte-identical.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 147 passed, 2 warnings (pre-existing imageio deprecations). Up from 135 (+12 learned tests; the +1 updated assertion is the planner-list change).
+- Ran `.venv/bin/python -m src.learn` at 15 items (train 20 / held-out 20, seed 0): held-out ticks-to-clear leastcov 34.6+/-3.9, occlusion 35.8+/-4.4, learned 38.1+/-5.5, nearretry 47.0, nearest 52.8, random 54.0 — learned ties the best heuristics (intervals overlap), clearly beats random/nearest/nearretry. At 25 items (seed 1): learned 58.6+/-5.3, leastcov 60.2+/-4.6, occlusion 63.4+/-5.3 (learned edges ahead but intervals overlap = tie). Honest finding: a 3-feature linear policy matches but does not clearly beat the best hand-written planners.
+- Verified the five baselines produce unchanged results and grasp constants are untouched.
+
+## 2026-10-24 - FIX (learned-policy branch): learned trials fail to replay/render in Live View
+
+### Changes
+- Fixed a KeyError that made Live View fail to replay/render a "learned" trial (other planners replayed fine). The trace/replay path couldn't reconstruct the weighted LearnedPlanner. Now a learned trial replays and renders in both shape modes, using the same weights the batch runner uses. No physics, constants, or learned weights changed.
+
+### Files Modified
+- `src/trace.py` — `build_trace` gained an optional `make_planner=None` callback; when provided it builds the planner via that callable, else it falls back to the built-in `PLANNER_FACTORIES`.
+- `app/logic.py` — `replay_trial` now passes the app's `make_planner` into `build_trace`, so "learned" (and any configured planner) is reconstructed exactly as the batch runner builds it.
+- `tests/test_learned.py` — added a regression test that a learned trial traces/renders (parametrized over both shape modes) and a test that the make_planner override is behavior-preserving for a baseline.
+
+### Technical Details
+- Root cause: two planner registries diverged — `app/logic._PLANNER_FACTORIES` includes "learned", but `src/trace.PLANNER_FACTORIES` only had the five parameterless planners. The batch runner builds planners via `logic.make_planner` (so metrics worked), but replay went through `build_trace`, whose own dict raised `KeyError: 'learned'`. A learned trial also needs its weights, which the parameterless factory couldn't supply.
+- Fix keeps the headless core decoupled: `src/trace.py` does NOT import the app. Instead the app injects its factory via the new callback, so the replayed learned planner uses the same `LEARNED_DEFAULT_WEIGHTS` as the runner. The callback defaults to None, preserving existing callers (render.py, trace tests) unchanged.
+- Verified the learned replay's trace matches its paired `run_episode` result (sorted/failed/pushes/steps) in both axis-aligned and rotated modes, confirming the replay uses the same weights.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 150 passed, 2 warnings (pre-existing imageio deprecations). Up from 147 (+3).
+- Reproduced the original `KeyError: 'learned'` before the fix; after the fix, learned replays build/render in both modes and match the sim.
+- Confirmed `src/robot.py` is untouched (grasp constants) and `LEARNED_DEFAULT_WEIGHTS` is unchanged (1.0, 1.0, 1.0); the five baselines are unaffected (the make_planner override is behavior-preserving).
+
+## 2026-10-24 - FIX (learned-policy branch): learned planner uses optimized weights (one source of truth)
+
+### Changes
+- Fixed the app's learned planner so it uses the optimized weights (0.1175, 0.0888, -0.7255) instead of an all-1.0 default, with a single source of truth shared by the batch runner and the Live View replay/render path. Previously both app paths ran the all-ones default, so "learned" never reflected the trained policy. No physics or grasp constants changed.
+
+### Files Modified
+- `src/planner.py` — added `DEFAULT_LEARNED_WEIGHTS = (0.1175, 0.0888, -0.7255)` (the one authoritative copy, with provenance comment); `LearnedPlanner.__init__` now defaults to it instead of all-ones.
+- `app/logic.py` — imports `DEFAULT_LEARNED_WEIGHTS` and uses it in the `"learned"` registry entry; removed the local `LEARNED_DEFAULT_WEIGHTS = (1.0, 1.0, 1.0)`.
+- `tests/test_learned.py` — added a regression test asserting the learned replay renders and uses the optimized weights, not (1,1,1).
+
+### Technical Details
+- Root cause: the app registry built the learned planner with a local all-1.0 constant, and `LearnedPlanner`'s own default was also all-ones. The optimized vector only existed in `src/learn.py` run output, never wired into the app.
+- Chose a single named constant in `src/planner.py` because both `app/logic.py` and `src/learn.py` already import from it, so one constant is reachable by every path with no new or inverted dependencies. Verified the literal vector now appears exactly once (grep) and no stale `LEARNED_DEFAULT_WEIGHTS` reference remains.
+- The replay/render path already shares the app's `make_planner` (from the prior KeyError fix), so pointing that one factory at the shared constant makes Results and Live View run the identical policy.
+- Caveat noted to the user: `DEFAULT_LEARNED_WEIGHTS` is a hard-coded copy of the search output and can drift if the search is re-run with different settings; a dynamic alternative would persist/load the search result.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Up from 150 (+1 regression test), zero failures.
+- Verified the new test fails under the old all-ones default (bug caught) and passes after the fix.
+- Confirmed `git diff main -- src/robot.py` prints nothing (physics constants untouched).
+
+## 2026-10-24 - FEATURE (learned-policy branch): read-only learned-weights display in Results
+
+### Changes
+- Added a read-only "About the learned policy" caption to the Streamlit Results section, shown only when a learned planner is in the run. It displays the learned weights for transparency. Display-only: no input, slider, or editing path. No physics, no weight changes, no batch/trace/replay changes.
+
+### Files Modified
+- `app/streamlit_app.py` — added the learned-weights caption in `_render_results`, gated on "learned" being among the run's planners.
+
+### Technical Details
+- The caption reads the numbers from `logic.DEFAULT_LEARNED_WEIGHTS` (the re-export of the single source-of-truth constant `src.planner.DEFAULT_LEARNED_WEIGHTS`) and formats them by feature: coverage=w0, distance=w1, crowding=w2. No weight literals are hard-coded in the app (grep for 0.1175/0.0888/0.7255 finds none), so the display tracks the constant automatically if it ever changes.
+- Text notes the negative crowding weight means the policy clears crowded clusters first, and states the weights are fixed/not editable.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Count unchanged, zero failures (UI caption; no test added).
+- Confirmed `git diff main -- src/robot.py` prints nothing (physics constants untouched) and verified the caption pulls values from the constant (no hard-coded copy).

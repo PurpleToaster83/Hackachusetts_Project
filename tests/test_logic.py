@@ -166,9 +166,14 @@ def test_run_experiment_rejects_unknown_planner() -> None:
 
 
 def test_available_planners_is_stable() -> None:
-    """available_planners returns the documented five names in a stable order."""
+    """available_planners returns the documented names in a stable order.
+
+    The five hand-written planners plus the selectable learned planner.
+    """
     names = logic.available_planners()
-    assert names == ["random", "nearest", "leastcov", "nearretry", "occlusion"]
+    assert names == [
+        "random", "nearest", "leastcov", "nearretry", "occlusion", "learned",
+    ]
     assert logic.available_planners() == names
 
 
