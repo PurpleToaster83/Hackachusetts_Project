@@ -175,6 +175,42 @@ def covered_fraction(scene: Scene, item_id: int) -> float:
     return float(min(covered / area, 1.0))
 
 
+def _edge_gap(a: Item, b: Item) -> float:
+    """Smallest pixel gap between two items' bounding boxes.
+
+    Returns 0.0 when the boxes touch or overlap, otherwise the shortest
+    distance between their edges (the larger of the per-axis gaps, so a
+    diagonal separation is measured by whichever axis is clear).
+    """
+    al, at, ar, ab = a.bounds()
+    bl, bt, br, bb = b.bounds()
+    gap_x = max(bl - ar, al - br, 0.0)
+    gap_y = max(bt - ab, at - bb, 0.0)
+    return max(gap_x, gap_y)
+
+
+def crowding_neighbors(scene: Scene, item_id: int, margin: float) -> list[int]:
+    """Ids of items whose box comes within ``margin`` pixels of ``item_id``.
+
+    An item crowds ``item_id`` when the gap between their bounding boxes is less
+    than ``margin`` pixels (touching or overlapping counts). The item itself is
+    never listed. Used to decide the grasp clearance penalty.
+    """
+    target = scene.item_by_id(item_id)
+    crowding: list[int] = []
+    for other in scene.items:
+        if other.id == item_id:
+            continue
+        if _edge_gap(target, other) < margin:
+            crowding.append(other.id)
+    return sorted(crowding)
+
+
+def is_crowded(scene: Scene, item_id: int, margin: float) -> bool:
+    """True when any other item sits within ``margin`` pixels of ``item_id``."""
+    return bool(crowding_neighbors(scene, item_id, margin))
+
+
 def occluders(scene: Scene) -> dict[int, list[int]]:
     """Map each item id to the ids of items that cover more than 25% of it.
 

@@ -47,3 +47,96 @@
 ### Testing
 - Ran `.venv/bin/pytest -q` this turn: 13 passed in 0.05s.
 - Intermediate runs caught two faulty test assumptions I then fixed: a float-equality assertion on `0.2` (switched to `math.isclose`), and the mistaken assumption that `make_scene(clutter=0)` yields no overlaps (switched to a hand-built spaced scene).
+
+## 2026-10-24 - Add gripper, push primitive, tick-based timing, and action protocol
+
+### Changes
+- Added a `Gripper` dataclass and `Grasp`/`Push` action types, and a `push` primitive that moves an item and reduces what it covered.
+- Made episode time tick-based: each action costs ticks proportional to gripper travel distance (capped speed, 15 Hz), and a failed grasp costs an extra tick.
+- Changed the planner interface to `next_action(scene, gripper)`; planners now return a `Grasp` or `Push` action. Updated `RandomPlanner` to match.
+- `EpisodeResult.pushes` is now populated.
+- Extended the robot and sim test suites (travel cost, push coverage reduction, push counting, determinism).
+
+### Files Modified
+- `src/robot.py` — added `Gripper`, `Grasp`, `Push`, `travel_ticks`, `push`, and `TICK_HZ`/`MAX_SPEED` constants alongside the existing grasp model.
+- `src/sim.py` — reworked `run_episode` around the action protocol, gripper travel, tick budget, and push counting.
+- `src/planner.py` — `RandomPlanner.next_action(scene, gripper)` returns a random grasp or (20% of the time) a push.
+- `tests/test_robot.py` — added tests for the gripper default, travel-cost monotonicity/floor, push coverage reduction, and desk clamping.
+- `tests/test_sim.py` — switched the no-overlap guarantee to a grasp-only planner, added push-counting and travel-cost tests, kept determinism/empty-scene tests.
+
+### Technical Details
+- `travel_ticks(distance) = max(1, ceil(distance / MAX_SPEED))` with `MAX_SPEED = 120.0` px/tick and `TICK_HZ = 15`. Any action (even zero-distance) costs at least one tick.
+- `run_episode` now constructs a `Gripper(0, 0)`, travels to the target item (adding travel ticks), then applies the action. `Grasp` uses the unchanged `grasp_success_prob(covered_fraction(...))`; a failed grasp adds one tick and increments `failed_grasps`. `Push` calls `robot.push`, increments `pushes`, and moves the gripper to follow the item.
+- `push(scene, item_id, dx, dy)` shifts the item and clamps its center to the desk. Coverage is geometric, so moving a covering item away reduces (or zeroes) the covered fraction of items beneath it — no explicit coverage bookkeeping needed.
+- Semantic change: `EpisodeResult.steps` now counts ticks rather than actions, so the `10 * items_total` cap is a tick budget. Flagged to the user for review; could revert to an action budget if preferred.
+- The no-overlap sorting test previously asserted `steps == n_items`; because `RandomPlanner` now sometimes pushes and steps are tick-based, that exact-count assertion no longer holds. The test now uses a deterministic grasp-only planner to keep the sorting guarantee checkable, with travel cost and push counting covered by separate tests.
+- Planner interface now matches the steering contract `next_action(scene, gripper)`.
+
+### Testing
+- Ran `.venv/bin/pytest -q` this turn: 20 passed in 0.06s.
+- Manual episode smoke this turn (`RandomPlanner`, n_items=15, clutter=0.6): seed 3 sorted 15/15 in 39 ticks with 6 pushes and 0 failed grasps; seed 7 sorted 15/15 in 30 ticks with 3 pushes and 0 failed grasps.
+- `run_eval.py --quick` was not run because that module does not exist yet (it is a later build step).
+
+## 2026-10-24 - Add nearest/occlusion planners, failed-grasp penalty, and comparison harness
+
+### Changes
+- Made a failed grasp cost 3 extra ticks via a named `FAILED_GRASP_TICKS` constant (was a hardcoded 1).
+- Added `NearestPlanner` (grasp nearest remaining item, coverage-blind) and `OcclusionPlanner` (grasp nearest exposed item; singulate by pushing coverers when needed).
+- Added `src/compare.py`, a headless harness that sweeps the three planners over 30 seeds x {5,15,25} items x clutter {0.3,0.9} and prints a metrics table.
+- Added an optional `max_ticks` budget parameter to `run_episode` so the harness can measure items sorted within a tick budget.
+- Extended the robot, sim, and planner test suites.
+
+### Files Modified
+- `src/robot.py` — added `FAILED_GRASP_TICKS = 3`.
+- `src/sim.py` — charge `FAILED_GRASP_TICKS` on a failed grasp; added optional `max_ticks` budget (defaults to the prior `10 * items_total`).
+- `src/planner.py` — added `NearestPlanner` and `OcclusionPlanner`, plus `_distance`/`_nearest` helpers and retry/push constants.
+- `src/compare.py` — new comparison harness (self-bootstraps `sys.path` to run as `python src/compare.py`).
+- `tests/test_robot.py` — assert the failed-grasp penalty constant is 3.
+- `tests/test_sim.py` — test that one failed grasp costs travel + `FAILED_GRASP_TICKS`.
+- `tests/test_planner.py` — new tests for nearest selection, occlusion never grasping a covered item while an exposed one exists, push-on-all-covered and push-after-two-failures paths, and per-planner determinism.
+
+### Technical Details
+- `OcclusionPlanner` computes `occluders(scene)` each call. Uncovered items (not in that map) are candidates; it grasps the nearest to the gripper. When no uncovered item remains, it picks the item with the fewest coverers and pushes its top coverer (highest z) away: direction is coverer-center minus item-center, normalized, magnitude about one coverer width.
+- Failure inference without extra sim plumbing: the planner records the id it last grasped; on the next call, if that item is still present the grasp must have failed, so it bumps a per-item attempt counter (a sorted item is gone, so its counter is retired). After two failures on an item that has a coverer, it pushes the coverer before retrying. This keeps the `next_action(scene, gripper)` contract unchanged.
+- `run_episode(max_ticks=...)` overrides the stopping budget; left unset it keeps the original `10 * items_total` behavior, so existing callers and tests are unaffected.
+- `compare.py` budget is `round(2.7 * n_items)` ticks: 5->14, 15->40, 25->68, matching the "40 ticks at 15 items" spec. It runs each cell twice per seed — once unbudgeted for ticks-to-clear/failed/pushes, once capped for items-sorted-in-budget.
+
+### Testing
+- Ran `.venv/bin/pytest -q` this turn: 29 passed in 0.06s.
+- Ran `python src/compare.py` this turn. Key real numbers (mean over 30 seeds):
+  - clutter 0.9, 25 items: occlusion cleared in 33.4 ticks, 1.53 failed grasps, sorted 25.0/25 within a 68-tick budget; nearest took 88.2 ticks, 15.23 failed grasps, sorted only 17.0/25.
+  - clutter 0.9, 15 items: occlusion 19.3 ticks / 0.47 failed / 15.0 sorted vs nearest 34.1 ticks / 4.17 failed / 13.7 sorted.
+  - Failed grasps for coverage-blind planners rise with clutter (nearest at 25 items: 3.03 at clutter 0.3 -> 15.23 at 0.9), confirming grasp success depends on coverage.
+  - Occlusion beats nearest at 15+ items in every tested cell, satisfying the workflow guardrail.
+- Verified the harness output is byte-identical across two runs (deterministic). Removed the temp files used for the diff check.
+
+## 2026-10-24 - Add clearance penalty, two baselines, value-based singulation, and CI table
+
+### Changes
+- Added a crowding clearance penalty: a grasp on an item with another item within 15 px of its edges is multiplied by 0.7.
+- Added two baseline planners: `LeastCoveredPlanner` (grasp smallest covered fraction, ties by distance) and `NearestRetryPlanner` (nearest, but skip an item for 5 actions after 2 failed grasps).
+- Updated `OcclusionPlanner` to singulate a crowded target only when the expected failed-grasp saving beats the push cost (rule stated in its docstring; constants not tuned to results).
+- Updated `compare.py` to cover all five planners and print mean +/- 95% interval for ticks-to-clear and failed grasps, plus the pushes column.
+- Extended robot and planner test suites.
+
+### Files Modified
+- `src/scene.py` — added `_edge_gap`, `crowding_neighbors`, and `is_crowded` geometry helpers.
+- `src/robot.py` — added `CLEARANCE_MARGIN = 15.0`, `CLEARANCE_PENALTY = 0.7`, and `effective_grasp_prob(scene, item_id)` combining coverage and crowding.
+- `src/sim.py` — grasp success now uses `effective_grasp_prob` instead of coverage alone.
+- `src/planner.py` — added `LeastCoveredPlanner` and `NearestRetryPlanner`; reworked `OcclusionPlanner` with a value-based declutter push and expected-tick helpers.
+- `src/compare.py` — five planners, 95% CI columns, pushes column.
+- `tests/test_robot.py` — clearance penalty constant, crowded/uncrowded probability, and push-removes-penalty tests (with corrected geometry).
+- `tests/test_planner.py` — least-covered selection, nearest-retry skip and return, value-based singulation behavior, and five-planner determinism.
+
+### Technical Details
+- Crowding test: `_edge_gap(a, b)` is 0 when boxes touch/overlap, else the larger per-axis gap. `crowding_neighbors` lists other items within `CLEARANCE_MARGIN` px; `is_crowded` is the boolean form.
+- `effective_grasp_prob` = `grasp_success_prob(covered_fraction) * (0.7 if crowded else 1.0)`, floored at `MIN_GRASP_PROB`. Because coverage and crowding are recomputed from live geometry each grasp, a push that moves either item clear automatically restores the probability — no penalty bookkeeping.
+- OcclusionPlanner singulation rule (fixed): expected wasted ticks before a success is `FAILED_GRASP_TICKS * (1 - p) / p`; clearing a crowd raises p from `base * 0.7` to `base`. Push only when that saving strictly exceeds push cost `travel_ticks(dist_to_neighbour) + 1`. For a fully exposed crowded item (base 1.0) the saving is ~1.29 ticks, below the 2-tick minimum push cost, so the declutter push never fires there by design.
+- Confirmed this is not a bug: OcclusionPlanner still pushes via the coverer-clearing paths (stubborn retry / all-covered), just rarely.
+- `compare.py` `_ci95` uses the sample std (n-1) and returns 0 for n<2.
+
+### Testing
+- Ran `.venv/bin/pytest -q` this turn: 37 passed in 0.07s. (Two robot tests failed on a first run due to my own wrong test coordinates — a 30 px gap instead of the intended 10 px; fixed the geometry and reran green.)
+- Ran `python src/compare.py` this turn (30 seeds, clutter 0.3 and 0.9). Sample real numbers at clutter 0.9, 25 items: nearest 164.5 +/- 17.1 ticks / 34.50 failed / 9.0 sorted@68t; leastcov 66.2 +/- 5.6 / 9.70 / 22.9; occlusion 69.4 +/- 6.0 / 10.47 / 22.0; random 113.0 +/- 9.8 / 15.40 / 12.8.
+- Counted OcclusionPlanner pushes directly this turn: 11 pushes across all 180 episodes, only in the 25-item cells (1 at clutter 0.3, 10 at clutter 0.9); none from the new declutter rule.
+- Verified `compare.py` output is byte-identical across two runs (deterministic). Removed temp files.
