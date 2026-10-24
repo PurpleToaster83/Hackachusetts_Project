@@ -704,3 +704,19 @@
 ### Testing
 - Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Count unchanged, zero failures (UI caption; no test added).
 - Confirmed `git diff main -- src/robot.py` prints nothing (physics constants untouched) and verified the caption pulls values from the constant (no hard-coded copy).
+
+## 2026-10-24 - FEATURE (learned-policy branch): Live View Model -> Trial selector with reset/clamp
+
+### Changes
+- Reorganized the Live View trial picker in the Streamlit app: the user now selects a Model (planner) first, then a Trial within that model, instead of one flat list of all trials. Changing the Model resets/clamps the Trial selection to a valid index so it can never index out of range. UI-only change.
+
+### Files Modified
+- `app/streamlit_app.py` — replaced the single "Trial to replay" selectbox in `_render_live_view` with a two-step Model -> Trial selection.
+
+### Technical Details
+- Models are the distinct planner names from the result rows (first-seen order). The Trial selectbox lists only the chosen model's rows; its Streamlit `key` is tied to the selected model (`live_view_trial::{model}`), so switching models yields a fresh selector defaulting to that model's first trial. An explicit `max(0, min(idx, len(model_rows)-1))` clamp guarantees no out-of-range index even with stale session state.
+- Works for every planner including "learned" and in both shape modes, because it only groups existing `result.rows` by planner — no planner- or shape-specific logic. Downstream replay/render, transport controls, and the learned-weights caption are unchanged (no labels, numbers, or weights touched).
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Unchanged count, zero failures.
+- Confirmed `git diff main -- src/robot.py app/logic.py src/planner.py` prints nothing (those files untouched); verified the module parses; and exercised the grouping/clamp logic headlessly (a stale index of 99 clamps to a valid trial for each model, including learned).

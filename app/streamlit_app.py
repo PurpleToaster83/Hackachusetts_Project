@@ -262,12 +262,35 @@ def _render_live_view(result: logic.ExperimentResult) -> None:
         st.info("Run an experiment first to populate trials.")
         return
 
-    idx = st.selectbox(
-        "Trial to replay",
-        options=list(range(len(rows))),
-        format_func=lambda i: _trial_label(rows[i]),
+    # Two-step selection: choose the Model (planner) first, then a Trial within
+    # that model. Works for every planner (including "learned") and in both
+    # shape modes, since it only groups the existing result rows by planner.
+    models = []
+    for r in rows:  # preserve first-seen planner order
+        if r.config.planner_name not in models:
+            models.append(r.config.planner_name)
+
+    model = st.selectbox("Model (planner)", options=models)
+
+    # Rows for the chosen model, with their original indices for labels/keys.
+    model_rows = [r for r in rows if r.config.planner_name == model]
+    if not model_rows:
+        st.info("No trials for that model — run an experiment to populate them.")
+        return
+
+    # Reset/clamp the Trial selection when the Model changes: the Trial
+    # selectbox is keyed to the selected model, so switching models yields a
+    # fresh selector defaulting to this model's first trial. The explicit clamp
+    # below guarantees we never index out of range even if state is stale.
+    trial_positions = list(range(len(model_rows)))
+    trial_pos = st.selectbox(
+        "Trial",
+        options=trial_positions,
+        format_func=lambda i: _trial_label(model_rows[i]),
+        key=f"live_view_trial::{model}",
     )
-    row = rows[idx]
+    trial_pos = max(0, min(int(trial_pos), len(model_rows) - 1))
+    row = model_rows[trial_pos]
 
     try:
         replay, images = _get_or_build_replay(row)
