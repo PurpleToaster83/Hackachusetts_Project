@@ -844,3 +844,84 @@
 ### Testing
 - Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Unchanged, zero failures.
 - Confirmed no `robotics` references remain in live code/tests (only domain words in README/log.py and stale .pyc caches), and `app.logic` imports cleanly with planners intact.
+## 2026-10-24 - Document learned policy and shape toggle in README
+
+### Changes
+- Added a short, honest "Learned policy (optional)" subsection that leads with the emergent finding: the trained policy grasps the most-crowded items first, clearing dense clusters before open ones.
+- Changed the planners heading from "Five planners" to "Five hand-written planners, plus an optional learned linear policy."
+- Added a one-liner on the experimental `rotate` shape toggle, keeping axis-aligned boxes as the headline default.
+
+### Files Modified
+- `README.md` — planners heading reworded; new learned-policy subsection; desk-generator bullet now notes the axis-aligned default and the experimental rotated-shape toggle.
+
+### Technical Details
+- The learned-policy description is grounded in the actual code: `DEFAULT_LEARNED_WEIGHTS = (0.1175, 0.0888, -0.7255)` in `src/planner.py`, where the three features are coverage, gripper distance, and crowding. `LearnedPlanner` grasps the lowest-scoring item, so the large negative crowding weight makes crowded items preferred — the crowded-clusters-first behavior. Noted it is a plain linear scorer (not a neural net), reuses the existing grasp model, and is trained/evaluated on disjoint seed splits via `src/learn.py`.
+- Kept axis-aligned boxes as the headline; `scene.py`'s `rotate` flag (per-kind convex polygon shapes) is flagged as experimental, matching the EXPERIMENTAL comment in the source.
+
+### Testing
+- No tests were run this turn. Changes are documentation-only (README prose); verified the described weights and planner behavior against `src/planner.py` and `src/learn.py` by reading the source.
+## 2026-10-24 - Clarify dataset timestamp units in README
+
+### Changes
+- Reworded the `timestamp` column description in the Dataset format section to avoid implying real-world seconds, keeping the README honest about what the value represents.
+
+### Files Modified
+- `README.md` — `timestamp` column now reads "abstract simulation time, tick / 15, not real-world seconds" instead of "seconds since start, tick / 15 Hz".
+
+### Technical Details
+- The simulation runs at a fixed 15 Hz tick, so `tick / 15` is a derived simulation-time value, not a measured wall-clock duration. The previous phrasing presented it as "seconds since start," which overstated its physical meaning; the new phrasing preserves the tick/15 formula while flagging it as abstract.
+
+### Testing
+- No tests were run this turn. Documentation-only wording change.
+## 2026-10-24 - Update stale test count in KIRO_USAGE.md
+
+### Changes
+- Corrected the stale "108 passing tests" claim in KIRO_USAGE.md to the current 151, after verifying the real count by running the suite.
+
+### Files Modified
+- `KIRO_USAGE.md` — the Tests section now states 151 passing tests instead of 108.
+
+### Technical Details
+- The documented count had drifted behind the suite as new tests were added. Verified the current number before editing rather than trusting the figure. Historical AI_CHANGELOG.md entries that mention 108 were intentionally left unchanged, since they were accurate at the time they were written.
+
+### Testing
+- Ran `.venv/bin/pytest -q` (Python 3.12): 151 passed, 2 warnings in 7.33s. The 2 warnings are pre-existing imageio DICOM deprecation warnings from `tests/test_render.py`, unrelated to this change.
+## 2026-10-24 - Correct the "Explored" section in KIRO_USAGE.md
+
+### Changes
+- Rewrote the "Explored" section of KIRO_USAGE.md, which incorrectly claimed the rotated-footprint spike was kept off main. Both the shape model and the learned linear policy actually shipped to main and are live in the app.
+
+### Files Modified
+- `KIRO_USAGE.md` — "Explored" section now describes the shape model (axis-aligned default plus experimental polygon footprints) and the learned linear policy as branch-built, test-gated, merged to main, and selectable in the app.
+
+### Technical Details
+- Verified the claim before editing rather than trusting it: current branch is `main`; `rotate` is present in `src/scene.py` and `LearnedPlanner` in `src/planner.py` on HEAD; git history shows a `Merge branch 'experiment-shapes'` commit. Both features are wired into the app — `app/logic.py` registers a selectable `learned` planner (using `DEFAULT_LEARNED_WEIGHTS`) and threads `rotate` through scene building; `app/streamlit_app.py` exposes the shape-model dropdown and the learned strategy. The axis-aligned box engine remains the default so the published baseline stays tied to the validated path.
+
+### Testing
+- No tests were run this turn. Documentation-only wording change; verified against git branch/history and the app source rather than by running the suite.
+## 2026-10-24 - Sync README project-structure tree with main
+
+### Changes
+- Updated the README project-structure tree to match the actual layout on main, which had drifted: it omitted `src/trace.py`, `src/learn.py`, and the entire `app/` directory.
+
+### Files Modified
+- `README.md` — project-structure block now lists `src/learn.py` and `src/trace.py`, updates the `planner.py` note to "the five hand-written planners + LearnedPlanner", broadens the `scene.py` note to include shape geometry, and adds an `app/` section (`streamlit_app.py`, `logic.py`, `requirements.txt`).
+
+### Technical Details
+- Verified the real layout with directory listings before editing: `src/` contains scene, robot, planner, learn, log, sim, trace, compare, run_eval, render (plus `__init__.py`); `app/` contains streamlit_app, logic, requirements.txt (plus `__init__.py`). Only files that actually exist were added. There was no `robotics/` entry in the structure block, so nothing needed removing there.
+
+### Testing
+- No tests were run this turn. Documentation-only change; verified against on-disk directory listings rather than by running the suite.
+## 2026-10-24 - Add Demo section with app run instructions to README
+
+### Changes
+- Added a "Demo" section near the top of the README so a judge landing on the README can reach the deployed app and run it locally. Previously the README documented only the local simulation engine, not the deployed Streamlit app that is the actual demo.
+
+### Files Modified
+- `README.md` — new "Demo" section between the intro and "Problem": live-app and video links, plus local run instructions (`pip install -r app/requirements.txt`, `streamlit run app/streamlit_app.py`) and a note that `app/requirements.txt` is headless (Agg backend, no pygame/imageio/pytest).
+
+### Technical Details
+- The run instructions were verified against the repo: `app/requirements.txt` and `app/streamlit_app.py` both exist, and the requirements file confirms the headless matplotlib-Agg setup. The live Streamlit URL and YouTube link do not exist anywhere in the repo, so they were NOT fabricated — both are left as clearly marked `<!-- TODO -->` placeholders (`https://<your-app>.streamlit.app`, `https://youtu.be/<your-video-id>`) for the real values to be pasted in.
+
+### Testing
+- No tests were run this turn. Documentation-only change; verified the referenced app files and the headless dependency list by reading them rather than by running the suite.

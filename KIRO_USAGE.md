@@ -56,8 +56,10 @@ worked:
 
 ## Tests
 
-The suite is run with `pytest` and currently reports 108 passing tests (one test
-file per module under `tests/`). It includes rigorous, property-style checks:
+The suite is run with `pytest` and currently reports 151 passing tests (one test
+file per module under `tests/`). The tests are example-based — hand-picked seeds
+and configs via `pytest.mark.parametrize`, using `pytest.approx`/`pytest.raises`,
+not property-based generative testing — but they assert strong invariants:
 determinism per seed, the occlusion/coverage geometry math, grasp-probability
 behavior, dataset-schema conformance, confidence-interval math matching the
 engine definition, and — for the headless trace core promoted out of the
@@ -82,4 +84,9 @@ only on Kiro's built-in file, terminal, spec, hook, and steering capabilities.
 
 ## Explored
 
-One feature (irregular rotated-rectangle object footprints) was explored as a time-boxed spike on a separate experiment-shapes branch and deliberately kept off main pending proper test coverage, so the reported results stay tied to the validated engine.
+Two larger features were built on separate branches and merged to main only after they passed the test gate, so both are now live in the app:
+
+- **Shape model** — item footprints default to axis-aligned boxes (matching the published results) with an experimental toggle for rotated convex polygon footprints. Started as a time-boxed spike on an `experiment-shapes` branch, then test-covered and merged.
+- **Learned linear policy** — a `LearnedPlanner` whose coverage/distance/crowding weights come from a reproducible seeded search evaluated on held-out seeds. Also built on a branch and merged after test-gating.
+
+Both are selectable in the Streamlit app (shape-model dropdown and the "learned" strategy), with the axis-aligned box engine kept as the default so the reported baseline results stay tied to the validated path.

@@ -5,6 +5,25 @@ right containers. It lets you build and compare sorting policies — rule-based
 heuristics now, with reinforcement learning possible later — against each other
 on the same randomized scenes.
 
+## Demo
+
+- **Live app:**
+Cloud URL --> `https://hackachusettsproject-cl4ytufkfrwnzskaa9z7vy.streamlit.app/`
+- **Video walkthrough:**
+`https://youtu.be/dPe4XmSiyoU`
+
+The live app is the interactive demo (Live View, Results, and tick-by-tick
+replay). To run it locally instead:
+
+```bash
+pip install -r app/requirements.txt
+streamlit run app/streamlit_app.py
+```
+
+`app/requirements.txt` is headless and intentionally excludes pygame, imageio,
+and pytest — the app renders replays with matplotlib's Agg backend. The sections
+below cover the local simulation engine and how to reproduce the results.
+
 ## Problem
 
 Robots sort uniform objects in fixed grids well, but struggle with overlapping
@@ -16,12 +35,15 @@ challenge.
 
 - **Randomized desk generator** — a 640x480 px desk with a clutter level (how
   tightly items are packed) and a stacking order (higher items sit on top).
+  Items are axis-aligned boxes by default; an experimental `rotate` toggle
+  swaps in per-kind rotated convex shapes (see `scene.py`).
 - **Occlusion rule** — an item is "covered" when a higher item overlaps more
   than 25% of its area. Grasp success falls as coverage rises.
 - **Kinematic gripper at 15 Hz** — moves at a capped speed and has two actions:
   `grasp` (lift an item into its container) and `push` (shove an item aside to
   singulate a cluttered pile).
-- **Five planners**, all rule-based — nothing is trained:
+- **Five hand-written planners, plus an optional learned linear policy** — the
+  five heuristics are rule-based:
   - `random` — pick a random item, sometimes push.
   - `nearest` — grasp the closest item, ignoring coverage.
   - `nearretry` — nearest, but skip an item that keeps failing.
@@ -29,7 +51,21 @@ challenge.
   - `occlusion` — grasp exposed items first and push to uncover or singulate
     when the expected payoff beats the cost.
 
-These are hand-written heuristics. No learning, no neural networks.
+### Learned policy (optional)
+
+What the search found is the interesting part: the trained policy prefers to
+grasp the **most-crowded** items first, clearing dense clusters before the open
+ones — the opposite of a naive "easy items first" rule, and it emerged on its
+own from optimizing ticks-to-clear.
+
+The learned planner (`src/learn.py`, `src/planner.py`) is a plain linear scorer,
+not a neural network. It weights three features already in the engine —
+coverage, gripper distance, and crowding — and grasps the lowest-scoring item.
+A reproducible hill-climb searches the three weights on a set of training seeds
+and the fixed policy is then evaluated on disjoint held-out seeds. The optimized
+weights `(0.118, 0.089, -0.726)` put a large negative weight on crowding, which
+is what produces the clear-crowded-clusters-first behavior. It reuses the
+existing grasp model and adds no new physics. Run it with `python -m src.learn`.
 
 ## Dataset format
 
@@ -39,7 +75,8 @@ simulation doubles as a reusable robotics dataset (see `src/log.py`):
 - `out/dataset/meta/episodes.csv` — one row per episode: `episode`, `task`
   (the natural-language instruction), `frames` (step count).
 - `out/dataset/data/episode_{index:06d}.csv` — one row per action with columns:
-  `frame_index`, `timestamp` (seconds since start, tick / 15 Hz),
+  `frame_index`, `timestamp` (abstract simulation time, tick / 15, not
+  real-world seconds),
   `state_x`/`state_y` (gripper position, px), `holding` (held item id or -1),
   `action_type` (`grasp` or `push`), `action_x`/`action_y` (item center for a
   grasp, push delta for a push, px), `reward` (1.0 on a successful grasp, else
@@ -114,14 +151,20 @@ python src/render.py --headless --seed 3 --out out/demo.mp4  # demo video
 ```
 messy_desk/
   src/
-    scene.py       # desk, items, occlusion and crowding geometry
+    scene.py       # desk, items, occlusion, crowding, and shape geometry
     robot.py       # gripper, grasp model, push primitive
-    planner.py     # the five planners
+    planner.py     # the five hand-written planners + LearnedPlanner
+    learn.py       # reproducible weight search for the learned policy
     sim.py         # run_episode: drives a planner against a scene
+    trace.py       # headless episode trace shared by eval and renderer
     log.py         # EpisodeLogger + dataset writer (bridge-v2 / droid shape)
     compare.py     # text benchmark table
     run_eval.py    # sweeps, plots, and out/results.md
     render.py      # pygame demo video (the only module that imports pygame)
+  app/
+    streamlit_app.py  # Streamlit UI: Live View, Results, replay
+    logic.py          # headless app logic (planner factories, trials, replay)
+    requirements.txt  # app-only extra deps (streamlit)
   tests/           # one test file per module
   out/             # generated plots, datasets, videos (gitignored)
   requirements.txt
