@@ -70,7 +70,11 @@ def run_episode(
     The run stops when every item is sorted or ``steps`` reaches the tick
     budget. The budget is ``max_ticks`` when given, otherwise
     ``10 * items_total`` ticks. ``scene`` and the gripper are mutated in place.
-    ``logger`` is accepted for interface stability and is currently unused.
+
+    When ``logger`` is given (a :class:`~src.log.EpisodeLogger`), one frame is
+    recorded per action: the gripper state after travelling to the target, the
+    action type and target, and the reward (1.0 for a successful grasp, else
+    0.0). The logger stamps ``timestamp`` from the current tick at 15 Hz.
     """
     rng = np.random.default_rng(seed)
 
@@ -95,7 +99,8 @@ def run_episode(
 
         if isinstance(action, Grasp):
             prob = effective_grasp_prob(scene, action.item_id)
-            if rng.random() < prob:
+            success = rng.random() < prob
+            if success:
                 scene.items = [
                     it for it in scene.items if it.id != action.item_id
                 ]
@@ -103,9 +108,31 @@ def run_episode(
             else:
                 failed_grasps += 1
                 steps += FAILED_GRASP_TICKS  # a failed grasp burns extra ticks
+            if logger is not None:
+                logger.log_frame(
+                    tick=steps,
+                    state_x=gripper.x,
+                    state_y=gripper.y,
+                    holding=gripper.holding,
+                    action_type="grasp",
+                    action_x=item.x,
+                    action_y=item.y,
+                    reward=1.0 if success else 0.0,
+                )
         elif isinstance(action, Push):
             push(scene, action.item_id, action.dx, action.dy)
             pushes += 1
+            if logger is not None:
+                logger.log_frame(
+                    tick=steps,
+                    state_x=gripper.x,
+                    state_y=gripper.y,
+                    holding=gripper.holding,
+                    action_type="push",
+                    action_x=action.dx,
+                    action_y=action.dy,
+                    reward=0.0,
+                )
             # Follow the item to where it was shoved.
             gripper.x = item.x
             gripper.y = item.y

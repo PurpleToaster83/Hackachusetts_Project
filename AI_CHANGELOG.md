@@ -140,3 +140,19 @@
 - Ran `python src/compare.py` this turn (30 seeds, clutter 0.3 and 0.9). Sample real numbers at clutter 0.9, 25 items: nearest 164.5 +/- 17.1 ticks / 34.50 failed / 9.0 sorted@68t; leastcov 66.2 +/- 5.6 / 9.70 / 22.9; occlusion 69.4 +/- 6.0 / 10.47 / 22.0; random 113.0 +/- 9.8 / 15.40 / 12.8.
 - Counted OcclusionPlanner pushes directly this turn: 11 pushes across all 180 episodes, only in the 25-item cells (1 at clutter 0.3, 10 at clutter 0.9); none from the new declutter rule.
 - Verified `compare.py` output is byte-identical across two runs (deterministic). Removed temp files.
+
+## 2026-10-24 - Add session handoff notes
+
+### Changes
+- Added `HANDOFF.md`, a repository handoff summary for picking the project up in a fresh session.
+
+### Files Modified
+- `HANDOFF.md` — new document: project purpose, git/test status, module-by-module summary of the simulation core (scene, robot, sim, planner, compare), real benchmark results so far, steering conventions, suggested next build steps, setup commands, and watch-outs.
+
+### Technical Details
+- Documentation only; no source code, tests, or behavior changed.
+- Captures current state: HEAD at commit fb8861e, clean tree, 37 tests passing, build steps 1-3 done (scene/robot/planners) with log.py, run_eval.py, render.py, and the RL stretch still to build.
+- File is untracked; committing it is left to the user.
+
+### Testing
+- No tests were run this turn (documentation-only change). The 37-passing status quoted in HANDOFF.md reflects the previous turn's `pytest -q` run, not a run this turn.
