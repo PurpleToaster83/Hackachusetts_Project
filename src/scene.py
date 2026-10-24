@@ -39,20 +39,38 @@ class Item:
     w: float  # width, pixels
     h: float  # height, pixels
     z: float  # stacking height; higher z sits on top
+    angle: float = 0.0  # footprint rotation in radians; 0.0 == axis-aligned
 
     @property
     def area(self) -> float:
-        """Item footprint area in square pixels."""
+        """Item footprint area in square pixels (rotation preserves area)."""
         return self.w * self.h
 
+    def polygon(self) -> list[tuple[float, float]]:
+        """Footprint corners (CCW) in pixels, rotated by ``angle`` about center.
+
+        A rotated rectangle. With ``angle == 0.0`` the corners are exactly the
+        axis-aligned box corners, so box-based behavior is unchanged.
+        """
+        hw, hh = self.w / 2.0, self.h / 2.0
+        # Local corners CCW: BL, BR, TR, TL.
+        local = ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))
+        ca = np.cos(self.angle)
+        sa = np.sin(self.angle)
+        return [
+            (self.x + lx * ca - ly * sa, self.y + lx * sa + ly * ca)
+            for lx, ly in local
+        ]
+
     def bounds(self) -> tuple[float, float, float, float]:
-        """Axis-aligned bounds as (left, top, right, bottom) in pixels."""
-        return (
-            self.x - self.w / 2.0,
-            self.y - self.h / 2.0,
-            self.x + self.w / 2.0,
-            self.y + self.h / 2.0,
-        )
+        """Axis-aligned bounding box (left, top, right, bottom) of the footprint.
+
+        For ``angle == 0.0`` this is the item's own box; for a rotated item it
+        is the AABB enclosing the rotated polygon (used as a cheap broad-phase).
+        """
+        xs = [px for px, _ in self.polygon()]
+        ys = [py for _, py in self.polygon()]
+        return (min(xs), min(ys), max(xs), max(ys))
 
 
 @dataclass
@@ -87,23 +105,101 @@ class Scene:
         raise KeyError(item_id)
 
 
+def _shoelace_area(poly: list[tuple[float, float]]) -> float:
+    """Unsigned area of a simple polygon (pixels^2) via the shoelace formula."""
+    n = len(poly)
+    if n < 3:
+        return 0.0
+    s = 0.0
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        s += x1 * y2 - x2 * y1
+    return abs(s) / 2.0
+
+
+def _clip_convex(
+    subject: list[tuple[float, float]], clip: list[tuple[float, float]]
+) -> list[tuple[float, float]]:
+    """Clip CCW convex ``subject`` by CCW convex ``clip`` (Sutherland-Hodgman).
+
+    Returns the vertices of the intersection polygon (possibly empty). Both
+    inputs must be convex and counter-clockwise.
+    """
+    output = list(subject)
+    n = len(clip)
+    for i in range(n):
+        if not output:
+            break
+        cx1, cy1 = clip[i]
+        cx2, cy2 = clip[(i + 1) % n]
+        ex, ey = cx2 - cx1, cy2 - cy1  # clip edge direction
+
+        def inside(p: tuple[float, float]) -> float:
+            # >= 0 means left of (or on) the CCW edge, i.e. inside.
+            return ex * (p[1] - cy1) - ey * (p[0] - cx1)
+
+        inp = output
+        output = []
+        m = len(inp)
+        for j in range(m):
+            cur = inp[j]
+            prv = inp[j - 1]
+            d_cur = inside(cur)
+            d_prv = inside(prv)
+            if d_cur >= 0:
+                if d_prv < 0:
+                    output.append(_edge_intersect(prv, cur, (cx1, cy1), (cx2, cy2)))
+                output.append(cur)
+            elif d_prv >= 0:
+                output.append(_edge_intersect(prv, cur, (cx1, cy1), (cx2, cy2)))
+    return output
+
+
+def _edge_intersect(p1, p2, q1, q2) -> tuple[float, float]:
+    """Intersection point of line p1->p2 with the infinite line q1->q2."""
+    x1, y1 = p1
+    x2, y2 = p2
+    x3, y3 = q1
+    x4, y4 = q2
+    denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+    if denom == 0.0:
+        return p2  # parallel; degenerate, fall back to the segment end
+    t_num = (x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)
+    t = t_num / denom
+    return (x1 + t * (x2 - x1), y1 + t * (y2 - y1))
+
+
 def _overlap_area(a: Item, b: Item) -> float:
-    """Area of the axis-aligned overlap between two items, in square pixels."""
+    """Area of the overlap between two item footprints, in square pixels.
+
+    Works for rotated rectangles (and any convex footprint) via convex polygon
+    clipping. With both items axis-aligned (``angle == 0.0``) it equals the AABB
+    overlap, so box-based behavior is unchanged. A quick AABB reject skips the
+    clip when the bounding boxes do not touch.
+    """
     al, at, ar, ab = a.bounds()
     bl, bt, br, bb = b.bounds()
-    dx = min(ar, br) - max(al, bl)
-    dy = min(ab, bb) - max(at, bt)
-    if dx <= 0.0 or dy <= 0.0:
+    if min(ar, br) <= max(al, bl) or min(ab, bb) <= max(at, bt):
         return 0.0
-    return dx * dy
+    inter = _clip_convex(a.polygon(), b.polygon())
+    return _shoelace_area(inter)
 
 
-def make_scene(seed: int, n_items: int, clutter: float) -> Scene:
+def make_scene(
+    seed: int, n_items: int, clutter: float, rotate: bool = False
+) -> Scene:
     """Build a randomized cluttered desk.
 
     ``seed`` fully determines the scene. ``n_items`` is the number of items to
     scatter. ``clutter`` in [0, 1] pulls items toward the desk center so higher
     values produce more overlap. All sizes and positions are in pixels.
+
+    ``rotate`` is an EXPERIMENTAL opt-in (spike): when True each item is given a
+    random footprint ``angle`` in radians, turning the boxes into rotated
+    rectangles. It defaults to False, and when False NO extra random draw is
+    made, so the rng draw order -- and therefore every existing scene and
+    downstream simulation result -- is byte-for-byte identical to before.
     """
     if n_items < 0:
         raise ValueError("n_items must be non-negative")
@@ -143,7 +239,11 @@ def make_scene(seed: int, n_items: int, clutter: float) -> Scene:
 
         # Stacking order: later items tend to sit on top. Jitter avoids ties.
         z = float(i + rng.uniform(0.0, 0.5))
-        items.append(Item(id=i, kind=kind, x=x, y=y, w=w, h=h, z=z))
+
+        # EXPERIMENTAL: only draw an angle when rotation is requested, so the
+        # default (rotate=False) draw order is unchanged from the box model.
+        angle = float(rng.uniform(0.0, np.pi)) if rotate else 0.0
+        items.append(Item(id=i, kind=kind, x=x, y=y, w=w, h=h, z=z, angle=angle))
 
     return Scene(
         width=DESK_W,
@@ -175,18 +275,80 @@ def covered_fraction(scene: Scene, item_id: int) -> float:
     return float(min(covered / area, 1.0))
 
 
-def _edge_gap(a: Item, b: Item) -> float:
-    """Smallest pixel gap between two items' bounding boxes.
+def _aabb_gap(a: Item, b: Item) -> float:
+    """Smallest pixel gap between two items' axis-aligned bounding boxes.
 
-    Returns 0.0 when the boxes touch or overlap, otherwise the shortest
-    distance between their edges (the larger of the per-axis gaps, so a
-    diagonal separation is measured by whichever axis is clear).
+    Returns 0.0 when the boxes touch or overlap, otherwise the larger of the
+    per-axis gaps (so a diagonal separation is measured by whichever axis is
+    clear). This is the original box-based crowding measure.
     """
     al, at, ar, ab = a.bounds()
     bl, bt, br, bb = b.bounds()
     gap_x = max(bl - ar, al - br, 0.0)
     gap_y = max(bt - ab, at - bb, 0.0)
     return max(gap_x, gap_y)
+
+
+def _seg_seg_distance(p1, p2, q1, q2) -> float:
+    """Shortest distance between two 2D segments (0.0 if they intersect)."""
+    import math as _math
+
+    def dot(u, v):
+        return u[0] * v[0] + u[1] * v[1]
+
+    def sub(u, v):
+        return (u[0] - v[0], u[1] - v[1])
+
+    def clamp01(x):
+        return max(0.0, min(1.0, x))
+
+    def pt_seg(pt, a, b):
+        ab = sub(b, a)
+        denom = dot(ab, ab)
+        if denom == 0.0:
+            return _math.hypot(pt[0] - a[0], pt[1] - a[1])
+        tt = clamp01(dot(sub(pt, a), ab) / denom)
+        proj = (a[0] + tt * ab[0], a[1] + tt * ab[1])
+        return _math.hypot(pt[0] - proj[0], pt[1] - proj[1])
+
+    return min(
+        pt_seg(p1, q1, q2), pt_seg(p2, q1, q2),
+        pt_seg(q1, p1, p2), pt_seg(q2, p1, p2),
+    )
+
+
+def _poly_gap(a: Item, b: Item) -> float:
+    """Smallest pixel gap between two convex footprints (0.0 if overlapping).
+
+    Used when either item is rotated. When they overlap the gap is 0.0;
+    otherwise it is the minimum distance between their edges.
+    """
+    if _overlap_area(a, b) > 0.0:
+        return 0.0
+    pa = a.polygon()
+    pb = b.polygon()
+    na, nb = len(pa), len(pb)
+    best = float("inf")
+    for i in range(na):
+        e1a, e1b = pa[i], pa[(i + 1) % na]
+        for j in range(nb):
+            e2a, e2b = pb[j], pb[(j + 1) % nb]
+            d = _seg_seg_distance(e1a, e1b, e2a, e2b)
+            if d < best:
+                best = d
+    return best
+
+
+def _edge_gap(a: Item, b: Item) -> float:
+    """Smallest pixel gap between two item footprints.
+
+    For axis-aligned items (both ``angle == 0.0``) this uses the original
+    AABB gap, so box-based crowding is unchanged. If either item is rotated it
+    falls back to the convex polygon gap.
+    """
+    if a.angle == 0.0 and b.angle == 0.0:
+        return _aabb_gap(a, b)
+    return _poly_gap(a, b)
 
 
 def crowding_neighbors(scene: Scene, item_id: int, margin: float) -> list[int]:

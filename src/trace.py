@@ -64,7 +64,12 @@ PLANNER_FACTORIES: dict[str, object] = {
 # --------------------------------------------------------------------------- #
 @dataclass
 class ItemState:
-    """A drawable snapshot of one item (center, size, kind, z)."""
+    """A drawable snapshot of one item (center, size, kind, z, angle).
+
+    ``angle`` is the footprint rotation in radians (0.0 for axis-aligned items);
+    it lets the renderer draw the true rotated footprint. It never affects the
+    simulation, which reads geometry from the live Scene, not from the trace.
+    """
 
     id: int
     kind: str
@@ -73,6 +78,7 @@ class ItemState:
     w: float
     h: float
     z: float
+    angle: float = 0.0
 
 
 @dataclass
@@ -119,7 +125,10 @@ class Trace:
 def _item_states(scene: Scene) -> list[ItemState]:
     """Snapshot the scene's items as drawable states, sorted by z (low first)."""
     states = [
-        ItemState(id=it.id, kind=it.kind, x=it.x, y=it.y, w=it.w, h=it.h, z=it.z)
+        ItemState(
+            id=it.id, kind=it.kind, x=it.x, y=it.y, w=it.w, h=it.h, z=it.z,
+            angle=getattr(it, "angle", 0.0),
+        )
         for it in scene.items
     ]
     states.sort(key=lambda s: s.z)

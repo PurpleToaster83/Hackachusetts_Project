@@ -392,7 +392,11 @@ class ContainerBox:
 
 @dataclass
 class ItemBox:
-    """A drawable item snapshot. Center and size in pixels; z is stack height."""
+    """A drawable item snapshot. Center/size in pixels; z is stack height.
+
+    ``angle`` is the footprint rotation in radians (0.0 for axis-aligned);
+    the renderer draws the true rotated footprint when it is non-zero.
+    """
 
     id: int
     kind: str
@@ -401,6 +405,7 @@ class ItemBox:
     w: float
     h: float
     z: float
+    angle: float = 0.0
 
 
 @dataclass
@@ -451,7 +456,10 @@ def _to_replay_frame(tf) -> ReplayFrame:
         gx=tf.gx,
         gy=tf.gy,
         items=[
-            ItemBox(id=s.id, kind=s.kind, x=s.x, y=s.y, w=s.w, h=s.h, z=s.z)
+            ItemBox(
+                id=s.id, kind=s.kind, x=s.x, y=s.y, w=s.w, h=s.h, z=s.z,
+                angle=getattr(s, "angle", 0.0),
+            )
             for s in tf.items
         ],
         event=tf.event,
@@ -519,10 +527,26 @@ def _draw_item_glyph(ax, s, fill, accent) -> None:
     ``accent`` is a darker detail colour. A faint outline of the true bounding
     box is kept so the real footprint stays visible.
     """
+    import numpy as _np
     from matplotlib.patches import Arc, Circle, FancyBboxPatch, Polygon, Rectangle
 
     cx, cy, w, h = s.x, s.y, s.w, s.h
     half = min(w, h) / 2.0
+
+    angle = getattr(s, "angle", 0.0)
+    if angle:
+        # EXPERIMENTAL (spike): draw the TRUE rotated footprint the sim uses --
+        # a rotated rectangle -- filled with the kind colour. The detailed
+        # per-kind glyph (handle arc, teeth, nib) is only drawn for axis-aligned
+        # items; a rotated item shows its real footprint plus the letter label.
+        hw, hh = w / 2.0, h / 2.0
+        ca, sa = _np.cos(angle), _np.sin(angle)
+        corners = [
+            (cx + lx * ca - ly * sa, cy + lx * sa + ly * ca)
+            for lx, ly in ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))
+        ]
+        ax.add_patch(Polygon(corners, facecolor=fill, edgecolor=accent, linewidth=1.0))
+        return
 
     # Faint true-box outline (the actual sim footprint).
     ax.add_patch(

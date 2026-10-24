@@ -492,3 +492,25 @@
 - Ran `.venv/bin/python -m pytest -q` (Python 3.12.15, pytest 9.1.1): 108 passed, 2 warnings — unchanged, confirming no behavior changed. The 2 warnings are pre-existing imageio deprecations in `tests/test_render.py`.
 - Rendered and visually inspected preview frames (written under out/, gitignored): a sparse desk shows the two-finger claw clearly and pens reading as pens; frame shapes confirmed 640x480 (default) and 240x320 (custom).
 - Confirmed via `git diff --stat`/`git status -- src/` that no `src/` file changed, and via runtime sys.modules check that importing `app.logic` loads no pygame.
+
+## 2026-10-24 - SPIKE (experiment-shapes branch): rotated-rectangle item footprints
+
+### Changes
+- Feasibility spike (not a finished feature) proving items can be modeled as rotated rectangles instead of axis-aligned boxes while keeping overlap/occlusion/coverage/crowding coherent. All changes are on the throwaway `experiment-shapes` branch. The default (axis-aligned) path is behavior-preserving: no existing sim result changes.
+
+### Files Modified
+- `src/scene.py` — added `Item.angle` + `Item.polygon()`; rewrote `_overlap_area` as convex polygon intersection; made `_edge_gap` polygon-aware; added opt-in `make_scene(rotate=False)`.
+- `src/trace.py` — `ItemState` now carries `angle` so the renderer can see rotation.
+- `app/logic.py` — `ItemBox` carries `angle`; `_draw_item_glyph` draws the true rotated footprint for rotated items.
+
+### Technical Details
+- Geometry is encapsulated in scene.py behind `_overlap_area`, `covered_fraction`, `_edge_gap`/`crowding_neighbors`, `occluders`. robot.py and planner.py call only the named functions, so swapping internals to polygons required ZERO planner changes — the key feasibility finding.
+- `_overlap_area` uses Sutherland-Hodgman convex clipping + shoelace area with an AABB broad-phase reject; at angle 0 it equals the old AABB overlap exactly (verified 400, 1600, 0 on the hand-built cases). `_edge_gap` keeps the exact old AABB gap when both items are axis-aligned and falls back to a segment-to-segment polygon gap when either is rotated.
+- `make_scene` gained `rotate=False`; when False, NO extra rng draw is made, so the default draw order and every existing scene/sim result are byte-for-byte unchanged. Angle is drawn only when `rotate=True`.
+- Known limitations (spike): no committed test drives the rotated path (all 108 tests are angle=0); `_clip_convex` can emit a duplicate vertex when a vertex lies exactly on a clip edge (correct area in cases checked, not production-robust); `replay_trial`/Live View can't show rotation through the normal path because `build_trace` calls `make_scene` without `rotate=True`; rotated items draw as plain rectangles (no detailed glyphs); arbitrary non-rectangle polygons untested.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 108 passed, 2 warnings (pre-existing imageio deprecations). No box-based test needed updating because angle=0 is behavior-preserving. Suite is slower (~6.5s vs ~2s) due to polygon clipping replacing AABB math.
+- Ran `.venv/bin/python -m src.run_eval --quick`: completed end-to-end (all five planners, both sweeps).
+- Verified ad-hoc (not in the committed suite): all five planners run end-to-end and deterministically on `rotate=True` scenes and clear all items; polygon overlap varies correctly with angle (concentric 40x40 squares 1600 -> ~1325 at 45deg); Live View renders rotated footprints (preview written under out/, gitignored).
+- Confirmed current branch is `experiment-shapes`; changes are uncommitted.
