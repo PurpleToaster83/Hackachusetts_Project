@@ -13,6 +13,19 @@ Run locally:
 
 from __future__ import annotations
 
+# Make the repository root importable regardless of the working directory.
+# Streamlit Community Cloud runs this script from a different cwd than a local
+# `streamlit run`, so `from app import logic` (and logic.py's own `import
+# src.*`) would otherwise fail with ModuleNotFoundError. Adding the repo root
+# (the parent of this file's `app/` directory) to sys.path makes both `app` and
+# `src` resolve in either environment.
+import os
+import sys
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 # Force the headless matplotlib backend BEFORE anything imports pyplot. Stage 2
 # draws no figures yet, but later sections will; setting this at import time
 # guarantees no module pulls in a GUI backend on the Cloud container.

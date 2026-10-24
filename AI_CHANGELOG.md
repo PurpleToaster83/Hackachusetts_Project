@@ -409,3 +409,21 @@
 ### Testing
 - Ran `.venv/bin/python -m pytest -q` (Python 3.12.15, pytest 9.1.1): 70 passed, 2 warnings. The 2 warnings are pre-existing imageio deprecations in `tests/test_render.py`, unrelated to this change.
 - Verified `app/streamlit_app.py` imports no src/pygame/render (static grep) and confirmed via `git diff --stat` that no `src/` file was modified.
+
+## 2026-10-24 - Fix Streamlit Cloud import of app/src modules
+
+### Changes
+- Fixed `app/streamlit_app.py` so `from app import logic` (and logic.py's own `import src.*`) resolves both locally and on Streamlit Community Cloud, which runs the script from a different working directory and otherwise raised `ModuleNotFoundError: No module named 'app'`. No simulation behavior or `src/` file was changed.
+
+### Files Modified
+- `app/streamlit_app.py` — prepend a sys.path bootstrap that adds the repo root before importing logic.
+
+### Technical Details
+- Added, immediately after `from __future__ import annotations` and before the matplotlib/logic imports, a bootstrap that computes the repo root as the parent of this file's `app/` directory via `os.path.dirname(os.path.dirname(os.path.abspath(__file__)))` and inserts it at the front of `sys.path` (guarded by an `if not in` check).
+- Kept `from app import logic` rather than switching to `import logic`: a single repo-root entry resolves both `app` (for the UI import) and `src` (for logic.py's `import src.*`), since both packages live under the repo root. Using `abspath(__file__)` makes it independent of cwd.
+- `import os` / `import sys` are stdlib, so the UI import-boundary test (no src/pygame/render) still holds.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q` (Python 3.12.15, pytest 9.1.1): 70 passed, 2 warnings. The 2 warnings are pre-existing imageio deprecations in `tests/test_render.py`, unrelated to this change.
+- Simulated the Cloud scenario: loaded `app/streamlit_app.py` by file path from `/tmp` with no PYTHONPATH (streamlit/matplotlib/pandas stubbed); the module loaded and both `src` and `src.sim` resolved — the case that previously failed. Did not launch a live browser server (manual step; streamlit not installed in the venv).
+- Confirmed `git diff --stat -- src/` shows no changes.
