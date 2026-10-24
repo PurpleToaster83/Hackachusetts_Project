@@ -156,3 +156,28 @@
 
 ### Testing
 - No tests were run this turn (documentation-only change). The 37-passing status quoted in HANDOFF.md reflects the previous turn's `pytest -q` run, not a run this turn.
+
+## 2026-10-24 - Add dataset logger and wire it through the episode runner
+
+### Changes
+- Added `src/log.py`, the dataset layer that records each episode as frames and writes them to disk in the BridgeData V2 / DROID shape, so simulation runs double as a reusable robotics dataset (build order step 4).
+- Wired the previously-unused `logger` parameter through `src/sim.run_episode` so one frame is logged per gripper action when a logger is supplied.
+- Added `tests/test_log.py` covering the schema, frame/reward/done semantics, dataset layout, and determinism.
+
+### Files Modified
+- `src/log.py` — new module: `Frame` dataclass, `EpisodeLogger(task)` with `log_frame(...)` and `to_frame()`, `write_dataset(loggers, out_dir="out")`, and the `FRAME_COLUMNS` / `EPISODE_COLUMNS` schema constants.
+- `src/sim.py` — `run_episode` now logs a frame per action (grasp and push) via the `logger`; updated the docstring to describe the logging behavior. Grasp branch captures the success flag so reward can be recorded.
+- `tests/test_log.py` — new test file (8 tests).
+
+### Technical Details
+- Dataset layout under `out_dir`: `dataset/meta/episodes.csv` with columns `episode,task,frames` (matching `robotics/bridge-v2/data.csv`), and one `dataset/data/episode_{index:06d}.csv` per episode with columns `frame_index,timestamp,state_x,state_y,holding,action_type,action_x,action_y,reward,done`.
+- One frame is logged per action, recording the post-travel gripper state. `timestamp` is `tick / TICK_HZ` seconds (15 Hz). `holding` of `None` is stored as -1. For a grasp, `action_x/action_y` is the item center and `reward` is 1.0 on success else 0.0; for a push, they are the push delta `(dx, dy)` and `reward` is 0.0.
+- `to_frame()` sets `done=True` only on the last frame and returns a schema-columned DataFrame (empty but still columned when no frames were logged).
+- `write_dataset` creates `meta/` and `data/` as needed, indexes episodes by list position, and records each episode's frame count in the meta file. Output goes under `out/` per the generated-files convention; `out/` is gitignored.
+- Core stays headless: `log.py` imports only `pandas`, `pathlib`, and `src.robot.TICK_HZ`; no pygame. Passing no logger leaves `run_episode` behavior and `compare.py` output unchanged.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q` this turn: 45 passed in 0.32s (37 prior + 8 new in `test_log.py`).
+- Ran `python src/compare.py` this turn to confirm no regression: OcclusionPlanner still beats NearestPlanner at 15+ items (clutter 0.9, 25 items: nearest 164.5 +/- 17.1 ticks / 34.50 failed vs occlusion 69.4 +/- 6.0 / 10.47), matching the prior handoff numbers.
+- Ran an end-to-end smoke write this turn (3 episodes, OcclusionPlanner) into `out/dataset/`: `meta/episodes.csv` produced the `episode,task,frames` rows and each `episode_{i:06d}.csv` carried the full 10-column schema.
+- Determinism test (`test_write_dataset_is_deterministic`) confirms the same seed produces byte-identical episode data files.
