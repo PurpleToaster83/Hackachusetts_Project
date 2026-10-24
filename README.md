@@ -168,3 +168,10 @@ messy_desk/
   requirements.txt
   README.md
 ```
+## Applications
+
+Though it runs entirely in simulation, Messy Desk targets a real robotics problem: how a gripper should decide what to pick first when objects overlap and occlude each other — the core decision in warehouse bin-picking, parts sorting, and recycling lines. By decoupling that strategy question from perception and control, the simulation makes it cheap and fully reproducible to compare picking policies — including a learned policy against hand-written heuristics — before committing to expensive hardware or data collection. Runs are logged in the BridgeData V2 / DROID dataset shape, so the same setup also illustrates how episodes would be recorded to train such policies.
+
+## Future directions
+
+The grasp model here is deliberately simple and legible, and that was a design choice rather than a limitation of ambition: a transparent, rule-based cost model made every planner comparison explainable, kept runs fast and fully reproducible, and let the whole thing deploy as a lightweight browser app with no heavy dependencies — which is what made a fair side-by-side of hand-written and learned policies tractable in the time available. The natural extensions trade some of that simplicity for realism: swapping the kinematic model for a real physics engine (such as MuJoCo, PyBullet, or Isaac) to get genuine contact, friction, and 3D stacking; concave and truly 3D object footprints; a grasp model calibrated against measured success rates; richer learned policies (for example reinforcement learning rather than the current linear hill-climb); and a perception front-end so the planner reads noisy detections instead of ground-truth scene geometry. Each is future work — the current results are reported only for the validated 2D simulation.
