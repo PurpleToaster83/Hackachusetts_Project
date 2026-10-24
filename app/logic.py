@@ -533,20 +533,29 @@ def _draw_item_glyph(ax, s, fill, accent) -> None:
     )
 
     if s.kind == "pen":
-        # Thin rounded body along the item's longer axis, with a nib triangle.
+        # A pen barrel along the longer axis: rounded body, a small pointed nib
+        # at one end (kept small so it does not read as an arrowhead), and a
+        # short "clip" line near the other end.
         horizontal = w >= h
-        length = (w if horizontal else h) * 0.82
-        thick = max(2.0, half * 0.32)
+        length = (w if horizontal else h) * 0.9
+        thick = max(3.0, half * 0.42)
+        nib = thick * 0.9  # small nib, not a big arrowhead
         if horizontal:
             x0, y0 = cx - length / 2, cy - thick / 2
-            bw, bh = length, thick
-            nib = [(cx + length / 2, cy - thick), (cx + length / 2, cy + thick),
-                   (cx + length / 2 + thick * 1.3, cy)]
+            bw, bh = length - nib, thick
+            tip = [(cx + length / 2 - nib, cy - thick / 2),
+                   (cx + length / 2 - nib, cy + thick / 2),
+                   (cx + length / 2, cy)]
+            clip = ([cx - length / 2 + bw * 0.18, cx - length / 2 + bw * 0.42],
+                    [cy - thick * 0.9, cy - thick * 0.9])
         else:
             x0, y0 = cx - thick / 2, cy - length / 2
-            bw, bh = thick, length
-            nib = [(cx - thick, cy + length / 2), (cx + thick, cy + length / 2),
-                   (cx, cy + length / 2 + thick * 1.3)]
+            bw, bh = thick, length - nib
+            tip = [(cx - thick / 2, cy + length / 2 - nib),
+                   (cx + thick / 2, cy + length / 2 - nib),
+                   (cx, cy + length / 2)]
+            clip = ([cx - thick * 0.9, cx - thick * 0.9],
+                    [cy - length / 2 + bh * 0.18, cy - length / 2 + bh * 0.42])
         ax.add_patch(
             FancyBboxPatch(
                 (x0, y0), bw, bh,
@@ -554,16 +563,17 @@ def _draw_item_glyph(ax, s, fill, accent) -> None:
                 facecolor=fill, edgecolor=accent, linewidth=0.8,
             )
         )
-        ax.add_patch(Polygon(nib, facecolor=accent, edgecolor=accent))
+        ax.add_patch(Polygon(tip, facecolor=accent, edgecolor=accent))
+        ax.plot(clip[0], clip[1], color=accent, linewidth=1.2)
 
     elif s.kind == "key":
         # Round bow with a hole, plus a short blade with two teeth.
-        bow_r = half * 0.42
-        bx = cx - w * 0.18
-        ax.add_patch(Circle((bx, cy), bow_r, facecolor=fill, edgecolor=accent, linewidth=0.8))
-        ax.add_patch(Circle((bx, cy), bow_r * 0.4, facecolor="#2c303a", edgecolor=accent, linewidth=0.6))
-        blade_w = w * 0.5
-        blade_h = max(2.0, half * 0.22)
+        bow_r = half * 0.62
+        bx = cx - w * 0.26
+        ax.add_patch(Circle((bx, cy), bow_r, facecolor=fill, edgecolor=accent, linewidth=1.0))
+        ax.add_patch(Circle((bx, cy), bow_r * 0.4, facecolor="#2c303a", edgecolor=accent, linewidth=0.8))
+        blade_w = w * 0.6
+        blade_h = max(3.0, half * 0.34)
         ax.add_patch(Rectangle((bx, cy - blade_h / 2), blade_w, blade_h,
                                facecolor=fill, edgecolor=accent, linewidth=0.6))
         tooth = blade_h
@@ -574,7 +584,7 @@ def _draw_item_glyph(ax, s, fill, accent) -> None:
 
     elif s.kind == "mug":
         # Rounded square body with a handle arc on the right.
-        body = min(w, h) * 0.6
+        body = min(w, h) * 0.86
         ax.add_patch(
             FancyBboxPatch(
                 (cx - body / 2, cy - body / 2), body, body,
@@ -590,7 +600,7 @@ def _draw_item_glyph(ax, s, fill, accent) -> None:
         import numpy as _np
 
         rng = _np.random.default_rng(s.id)  # stable per item, no sim rng used
-        r = half * 0.62
+        r = half * 0.92
         pts = []
         for k in range(7):
             ang = 2 * _np.pi * k / 7
@@ -604,12 +614,20 @@ def _draw_item_glyph(ax, s, fill, accent) -> None:
                 color=accent, linewidth=0.7)
 
 
-def _draw_gripper(ax, gx: float, gy: float, event: str) -> None:
-    """Draw a two-jaw gripper (open claw) at ``(gx, gy)``, drawn shapes only.
+# Nominal item size (pixels) used to scale the gripper so it reads at roughly
+# the size of a typical item on the 640x480 desk. Items are ~24-48 px wide.
+_GRIPPER_SPAN: float = 40.0
 
-    Two short parallel rectangles form the jaws on a small base. On a ``grasp``
-    the jaws close in and are highlighted; ``push`` and the idle move keep the
-    existing ring colours (green grasp, amber push, pale idle/fail).
+
+def _draw_gripper(ax, gx: float, gy: float, event: str) -> None:
+    """Draw a top-down parallel-jaw gripper at ``(gx, gy)``, drawn shapes only.
+
+    A rectangular hub with two short thick parallel fingers extending from it
+    toward the target (downward in screen space), forming an open claw with a
+    visible gap. The whole gripper is sized relative to a typical item
+    (:data:`_GRIPPER_SPAN`) so it is clearly visible. On a ``grasp`` the fingers
+    close the gap and the claw is highlighted; ``push`` and the idle move keep
+    the existing colours (green grasp, amber push, red fail, pale idle).
     """
     from matplotlib.patches import Rectangle
 
@@ -621,33 +639,51 @@ def _draw_gripper(ax, gx: float, gy: float, event: str) -> None:
     elif event == "fail":
         color = "#eb4646"
 
-    jaw_len = 12.0
-    jaw_thick = 3.0
-    gap = 10.0 if event != "grasp" else 4.0  # jaws close on a grasp
+    span = _GRIPPER_SPAN          # overall width of the claw
+    finger_len = span * 0.85      # how far the fingers reach toward the target
+    finger_thick = span * 0.22    # thick, clearly visible fingers
+    hub_h = span * 0.28           # the base/hub the fingers hang from
+    open_gap = span * 0.52        # inner gap between fingers when open
+    gap = open_gap * 0.35 if event == "grasp" else open_gap  # close on grasp
 
-    # Base bar the jaws hang from.
-    ax.add_patch(Rectangle((gx - (gap / 2 + jaw_thick), gy - jaw_len / 2 - 4),
-                           gap + 2 * jaw_thick, jaw_thick,
-                           facecolor=color, edgecolor="none"))
-    # Left and right jaws (parallel rectangles forming the claw).
-    ax.add_patch(Rectangle((gx - gap / 2 - jaw_thick, gy - jaw_len / 2),
-                           jaw_thick, jaw_len, facecolor=color, edgecolor="none"))
-    ax.add_patch(Rectangle((gx + gap / 2, gy - jaw_len / 2),
-                           jaw_thick, jaw_len, facecolor=color, edgecolor="none"))
+    # Hub sits "behind" the target (toward -y); fingers extend toward +y so the
+    # claw reaches over the item centered at (gx, gy).
+    hub_top = gy - finger_len / 2 - hub_h
+    hub_w = gap + 2 * finger_thick
+    ax.add_patch(
+        Rectangle((gx - hub_w / 2, hub_top), hub_w, hub_h,
+                  facecolor=color, edgecolor="#141418", linewidth=1.2, zorder=6)
+    )
+    # Left and right fingers (thick parallel rectangles) extending from the hub.
+    fy = hub_top + hub_h
+    ax.add_patch(
+        Rectangle((gx - gap / 2 - finger_thick, fy), finger_thick, finger_len,
+                  facecolor=color, edgecolor="#141418", linewidth=1.2, zorder=6)
+    )
+    ax.add_patch(
+        Rectangle((gx + gap / 2, fy), finger_thick, finger_len,
+                  facecolor=color, edgecolor="#141418", linewidth=1.2, zorder=6)
+    )
 
 
 def draw_frame(
     frame: ReplayFrame,
     containers: list[ContainerBox],
-    width_px: int = 420,
-    height_px: int = 320,
+    width_px: int = 640,
+    height_px: int = 480,
 ) -> "np.ndarray":
     """Render one replay frame to an (H, W, 3) uint8 RGB array with Agg.
 
     Headless: forces the matplotlib Agg backend before importing pyplot, so no
-    display and no pygame window are needed. Each kind is drawn with a letter
-    label, a fill colour, and a distinct edge style so colour is never the only
-    cue. A ``"fail"`` event highlights only ``frame.event_item``.
+    display and no pygame window are needed. The axes span exactly the desk
+    bounds (0-640 x, 0-480 y) with equal aspect and no margin, so items and the
+    gripper render at a readable size and fill the frame. Each kind is drawn
+    with a letter label, a fill colour, and a drawn glyph so colour is never the
+    only cue. A ``"fail"`` event highlights only ``frame.event_item``.
+
+    ``width_px`` x ``height_px`` default to the desk's 640x480 (4:3) aspect so
+    there is no empty margin shrinking the scene; they are rendered at an
+    internal supersample for crispness.
     """
     import matplotlib
 
@@ -655,11 +691,14 @@ def draw_frame(
     import matplotlib.pyplot as plt
     from matplotlib.patches import Circle, Rectangle
 
-    dpi = 100
+    # Supersample so the frame is crisp; the output array is width_px x height_px
+    # because the figure is exactly (width_px/dpi) x (height_px/dpi) inches.
+    dpi = 150
     fig = plt.figure(figsize=(width_px / dpi, height_px / dpi), dpi=dpi)
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_xlim(0, DESK_W)
     ax.set_ylim(DESK_H, 0)  # invert y so it matches screen coordinates
+    ax.set_aspect("equal")  # no distortion; desk 4:3 fills the 4:3 axes
     ax.set_facecolor("#2c303a")
     ax.set_xticks([])
     ax.set_yticks([])
@@ -689,7 +728,7 @@ def draw_frame(
         # placed at the top-left of the box so it does not hide the glyph.
         ax.text(
             s.x - s.w / 2 + 2, s.y - s.h / 2 + 2, _KIND_LETTER.get(s.kind, "?"),
-            color="#141418", ha="left", va="top", fontsize=7, fontweight="bold",
+            color="#141418", ha="left", va="top", fontsize=8, fontweight="bold",
         )
 
     # Two-jaw gripper (drawn shapes, no font); closes/highlights on a grasp.

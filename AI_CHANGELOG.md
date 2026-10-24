@@ -473,3 +473,22 @@
 - Ran `.venv/bin/python -m pytest -q` (Python 3.12.15, pytest 9.1.1): 108 passed, 2 warnings — unchanged count, confirming no behavior changed. The 2 warnings are pre-existing imageio deprecations in `tests/test_render.py`.
 - Smoke-rendered a full 25-frame replay (occlusion, seed 3, 20 items, clutter 0.9) exercising move/grasp/fail events across all glyph kinds with no errors; sample frame shape (320, 420, 3) uint8.
 - Confirmed via `git status`/`git diff -- src/` that no `src/` file changed, and via runtime sys.modules check that importing `app.logic` loads no pygame.
+
+## 2026-10-24 - Live View renderer: full-size desk, bigger glyphs, parallel-jaw gripper
+
+### Changes
+- Refined the Live View headless renderer so the scene fills the frame, item glyphs fill their boxes, pens no longer look like arrows, and the gripper reads as a parallel-jaw claw. Presentation only — no simulation behavior or geometry changed; no `src/` file touched; pytest stays at 108.
+
+### Files Modified
+- `app/logic.py` — reworked `draw_frame` figure sizing/axes, enlarged the item glyphs, redesigned the pen glyph, and rewrote `_draw_gripper`.
+
+### Technical Details
+- `draw_frame` now defaults to 640x480 (the desk's 4:3 aspect) at dpi=150, sets axes to exactly the desk bounds (xlim 0-640, ylim 480-0) with `set_aspect("equal")` and a full-bleed `add_axes([0,0,1,1])`, so there is no empty margin shrinking the scene. The returned array remains exactly (height_px, width_px, 3) — verified 480x640 default and 240x320 for the custom-size test.
+- Glyph scales were enlarged so each glyph roughly fills its real bounding box (pen body ~0.9 of the long axis; key bow/blade larger; mug body ~0.86; trash blob ~0.92 of the half-extent).
+- Pen glyph redesigned: replaced the large nib triangle (which read as an arrowhead) with a small pointed tip plus a short clip line, so it reads as a pen barrel.
+- `_draw_gripper` rewritten as a top-down parallel-jaw claw: a rectangular hub with two thick parallel fingers and a visible gap, scaled to a typical item width (`_GRIPPER_SPAN=40px`), with a dark outline and higher zorder so it stands out over items. The finger gap closes on a grasp; grasp/fail/push/idle keep the existing green/red/amber/pale colours. Item colours and P/K/M/T labels are preserved.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q` (Python 3.12.15, pytest 9.1.1): 108 passed, 2 warnings — unchanged, confirming no behavior changed. The 2 warnings are pre-existing imageio deprecations in `tests/test_render.py`.
+- Rendered and visually inspected preview frames (written under out/, gitignored): a sparse desk shows the two-finger claw clearly and pens reading as pens; frame shapes confirmed 640x480 (default) and 240x320 (custom).
+- Confirmed via `git diff --stat`/`git status -- src/` that no `src/` file changed, and via runtime sys.modules check that importing `app.logic` loads no pygame.
