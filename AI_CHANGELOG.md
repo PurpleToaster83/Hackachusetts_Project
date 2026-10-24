@@ -344,3 +344,21 @@
 
 ### Testing
 - No tests were run this turn (spec file deletion only; no code changed).
+
+## 2026-10-24 - Add Messy Desk Lab requirements and implementation plan
+
+### Changes
+- Added the requirements document and the implementation task list for the "messy-desk-lab" spec, derived from the existing design (design-first workflow). No source code or simulation behavior changed.
+
+### Files Modified
+- `.kiro/specs/messy-desk-lab/requirements.md` — new EARS-format requirements (13 requirements with Introduction and Glossary).
+- `.kiro/specs/messy-desk-lab/tasks.md` — new implementation plan ordered for earliest deployability.
+
+### Technical Details
+- Requirements cover the four app sections (Experiment, Live View, Results, Trial Explorer) plus cross-cutting decisions: deterministic replay from a minimal TrialConfig, the UI->logic->core boundary, the two proposed behavior-preserving engine changes (shared Trace_Core, optional planner.last_reason), CI reuse (Z_95=1.96, sample std n-1, 0.0 for n<2), Community Cloud deployment, and project constraints (robotics/ read-only, output under out/, no fabricated results, no tuning).
+- Tasks follow a user-specified deployability-first sequence: Stage 1 headless logic layer + CI stats + tests; Stage 2 minimal Streamlit shell (Experiment + Results) + app/requirements.txt without pygame/imageio/pytest; Stage 3 deploy + manual public-URL verification; Stage 4 Trace_Core promotion (src/trace.py, render.py re-exports) + Live View; Stage 5 planner rationale; Stage 6 Trial Explorer; Stage 7 batch cap + error polish.
+- Both engine touches (Stages 4 and 5) are flagged behavior-preserving, each gated by a determinism/parity test proving no EpisodeResult changes. Every code task is required to leave pytest -q green. A Task Dependency Graph places same-file tasks in separate waves.
+- Note: the requirements-detailing refinement pass from the prior turn was cancelled, so requirements.md holds the original (complete) acceptance criteria; the task breakdown traces cleanly to them.
+
+### Testing
+- No tests were run this turn (planning documents only; no code changed). Both documents passed `validate_spec_format` with no issues.
