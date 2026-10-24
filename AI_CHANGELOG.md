@@ -181,3 +181,29 @@
 - Ran `python src/compare.py` this turn to confirm no regression: OcclusionPlanner still beats NearestPlanner at 15+ items (clutter 0.9, 25 items: nearest 164.5 +/- 17.1 ticks / 34.50 failed vs occlusion 69.4 +/- 6.0 / 10.47), matching the prior handoff numbers.
 - Ran an end-to-end smoke write this turn (3 episodes, OcclusionPlanner) into `out/dataset/`: `meta/episodes.csv` produced the `episode,task,frames` rows and each `episode_{i:06d}.csv` carried the full 10-column schema.
 - Determinism test (`test_write_dataset_is_deterministic`) confirms the same seed produces byte-identical episode data files.
+
+## 2026-10-24 - Add run_eval.py evaluation sweeps, plots, and results.md
+
+### Changes
+- Added `src/run_eval.py`, the evaluation driver (build order step 5): runs the five planners across randomized desks, writes four figures to `out/plots/` and a markdown table file to `out/results.md`, all from real `run_episode` numbers.
+- Added `tests/test_run_eval.py` with a `--quick` smoke test plus constant-override and determinism tests.
+
+### Files Modified
+- `src/run_eval.py` — new module. CLI `--seeds N` (default 30) and `--quick` (5 seeds, item counts trimmed to 5/15). Builds four artifacts: ticks-to-clear vs n_items and failed-grasps vs n_items (both two-panel for clutter 0.3/0.9, all five planners, 95% interval error bars); a sensitivity grouped-bar plot at 15 items / clutter 0.9 sweeping FAILED_GRASP_TICKS in {1,3,5} x CLEARANCE_PENALTY in {1.0,0.7,0.5} over Occlusion/LeastCovered/NearestRetry; and a push ablation (OcclusionPlanner pushes on vs off) at 25 items / clutter 0.9. Writes `out/results.md` as markdown tables.
+- `tests/test_run_eval.py` — new test file (3 tests): quick run writes all four PNGs and results.md non-empty with expected headings; `override_constants` applies then restores globals on all three modules; two quick runs produce byte-identical results.md.
+
+### Technical Details
+- Headless plotting: `matplotlib.use("Agg")` is set before importing `pyplot`, so no display and no GUI/pygame dependency. Verified at runtime that the backend is Agg and `pygame` is not in `sys.modules` after import.
+- Constants are overridden by argument, not by editing globals: `override_constants(failed_grasp_ticks, clearance_penalty)` is a context manager that rebinds `FAILED_GRASP_TICKS` on `src.robot`, `src.sim`, and `src.planner` (all three imported it by name) and `CLEARANCE_PENALTY` on `src.robot` and `src.planner` (where it is actually read), then restores every saved attribute on exit. This matches how the sim and planner reference those names, so the overrides take effect without touching source globals.
+- Fresh scene and fresh planner per seed in `evaluate`, since scenes and the occlusion/retry planners carry mutable state that reuse would corrupt.
+- Push ablation uses a `NoPushPlanner` wrapper that delegates to an inner planner and converts any returned `Push` into a `Grasp` of the same item id, leaving grasps and `None` untouched. Chosen over forking the planner so the comparison isolates exactly the push behavior.
+- `results.md` is generated entirely from the swept `Stat` means/intervals (no hand-entered numbers) and includes a computed note on whether the sensitivity winner is stable across settings.
+- Statistics mirror `compare.py`: mean and 1.96*std/sqrt(n) with sample std (n-1), 0 for n<2.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q` this turn: 48 passed in 1.75s (45 prior + 3 new).
+- Ran `python src/run_eval.py --quick` this turn: wrote `out/plots/{ticks_vs_items,failed_vs_items,sensitivity,ablation}.png` and `out/results.md`; exited cleanly.
+- Real numbers from the quick run (5 seeds, wide intervals): clutter 0.9, 15 items ticks — nearest 72.6 +/- 39.0, leastcov 39.0 +/- 12.8, occlusion 38.6 +/- 13.7, nearretry 49.4 +/- 17.0.
+- Occlusion vs LeastCovered: occlusion wins outright in the harsher-penalty sensitivity rows (e.g. ft=5/cp=0.5: occlusion 55.2 +/- 4.0 vs leastcov 91.8 +/- 26.2); tie at default ft=3/cp=0.7; leastcov wins when cp=1.0. Ranking does not hold across all settings — by design, occlusion's edge appears when crowding is penalized.
+- Pushes do fire but rarely: ablation pushes_on averaged 0.60 +/- 0.78 pushes/episode at 25 items/clutter 0.9 (pushes_off 0.00); disabling pushes cost ~4 ticks and ~1 extra failed grasp per episode at this sample size.
+- Confirmed Agg backend and no pygame import at runtime this turn.
