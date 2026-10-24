@@ -23,6 +23,45 @@ KINDS: tuple[str, ...] = ("pen", "key", "mug", "trash")
 # Overlap of an item that must be covered for it to count as occluded.
 OCCLUSION_THRESHOLD: float = 0.25
 
+# EXPERIMENTAL: per-kind convex footprint shape used only in rotated mode.
+# pen stays a (long thin) rectangle; the others are distinct convex polygons.
+# All shapes are strictly convex so the convex-only overlap clipping is valid.
+KIND_SHAPE: dict[str, str] = {
+    "pen": "box",
+    "key": "hexagon",
+    "mug": "rounded",
+    "trash": "blob",
+}
+
+
+def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Counter-clockwise convex hull of 2D ``points`` (Andrew's monotone chain).
+
+    Returns the hull vertices in CCW order. Guarantees a convex result, so a
+    jittered "blob" point set becomes a valid convex polygon for the
+    convex-only overlap math. Degenerate inputs (<3 unique points) are returned
+    as-is.
+    """
+    pts = sorted(set(points))
+    if len(pts) < 3:
+        return pts
+
+    def cross(o, a, b) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower: list[tuple[float, float]] = []
+    for pt in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], pt) <= 0:
+            lower.pop()
+        lower.append(pt)
+    upper: list[tuple[float, float]] = []
+    for pt in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], pt) <= 0:
+            upper.pop()
+        upper.append(pt)
+    # Concatenate, dropping each list's last point (shared with the other).
+    return lower[:-1] + upper[:-1]
+
 
 @dataclass
 class Item:
@@ -40,36 +79,93 @@ class Item:
     h: float  # height, pixels
     z: float  # stacking height; higher z sits on top
     angle: float = 0.0  # footprint rotation in radians; 0.0 == axis-aligned
+    # Convex footprint shape. "box" (default) is the axis-aligned rectangle used
+    # by the published results. The others are EXPERIMENTAL convex polygons used
+    # only in rotated mode: "hexagon" (key), "rounded" (mug), "blob" (an
+    # irregular convex polygon, trash). "pen" items keep "box" (a long thin
+    # rectangle from their w/h). All shapes are strictly convex.
+    shape: str = "box"
 
-    @property
-    def area(self) -> float:
-        """Item footprint area in square pixels (rotation preserves area)."""
-        return self.w * self.h
+    def _local_vertices(self) -> list[tuple[float, float]]:
+        """Unrotated, center-origin footprint vertices (CCW), fit in w x h.
 
-    def polygon(self) -> list[tuple[float, float]]:
-        """Footprint corners (CCW) in pixels, rotated by ``angle`` about center.
-
-        A rotated rectangle. With ``angle == 0.0`` the corners are exactly the
-        axis-aligned box corners, so box-based behavior is unchanged.
+        For ``shape == "box"`` these are exactly the axis-aligned box corners,
+        so box behavior is unchanged. Other shapes are convex polygons scaled to
+        fit within the item's ``w`` x ``h`` extent.
         """
         hw, hh = self.w / 2.0, self.h / 2.0
-        # Local corners CCW: BL, BR, TR, TL.
-        local = ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))
+        if self.shape == "box":
+            return [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+        if self.shape == "hexagon":
+            # Elongated convex hexagon: flat-ish left/right ends, wide middle.
+            return [
+                (-hw, 0.0), (-hw * 0.5, -hh), (hw * 0.5, -hh),
+                (hw, 0.0), (hw * 0.5, hh), (-hw * 0.5, hh),
+            ]
+        if self.shape == "rounded":
+            # Convex octagon approximating a rounded footprint.
+            k = 0.5 * (2.0 ** 0.5 - 1.0) * 2  # corner-cut fraction ~0.414
+            cx, cy = hw * (1 - k), hh * (1 - k)
+            return [
+                (-cx, -hh), (cx, -hh), (hw, -cy), (hw, cy),
+                (cx, hh), (-cx, hh), (-hw, cy), (-hw, -cy),
+            ]
+        if self.shape == "blob":
+            # Irregular CONVEX polygon: deterministic per-item radii at sorted
+            # angles, then take the convex hull to guarantee convexity.
+            rng = np.random.default_rng(self.id)
+            pts = []
+            n = 7
+            for i in range(n):
+                ang = 2.0 * np.pi * i / n
+                r = 0.6 + 0.4 * rng.random()
+                pts.append((r * hw * np.cos(ang), r * hh * np.sin(ang)))
+            return _convex_hull(pts)
+        # Unknown shape: fall back to the box.
+        return [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+
+    def polygon(self) -> list[tuple[float, float]]:
+        """Footprint vertices (CCW) in pixels, rotated by ``angle`` about center.
+
+        With ``shape == "box"`` and ``angle == 0.0`` the vertices are exactly the
+        axis-aligned box corners, so box-based behavior is unchanged.
+        """
         ca = np.cos(self.angle)
         sa = np.sin(self.angle)
         return [
             (self.x + lx * ca - ly * sa, self.y + lx * sa + ly * ca)
-            for lx, ly in local
+            for lx, ly in self._local_vertices()
         ]
+
+    @property
+    def area(self) -> float:
+        """Footprint area in square pixels.
+
+        For a ``"box"`` this is exactly ``w * h`` (unchanged). For other convex
+        shapes it is the true polygon area (shoelace), so ``covered_fraction``
+        divides by the correct denominator. Rotation preserves area.
+        """
+        if self.shape == "box":
+            return self.w * self.h
+        poly = self._local_vertices()
+        s = 0.0
+        n = len(poly)
+        for i in range(n):
+            x1, y1 = poly[i]
+            x2, y2 = poly[(i + 1) % n]
+            s += x1 * y2 - x2 * y1
+        return abs(s) / 2.0
 
     def bounds(self) -> tuple[float, float, float, float]:
         """Axis-aligned bounding box (left, top, right, bottom) of the footprint.
 
-        For ``angle == 0.0`` this is the item's own box; for a rotated item it
-        is the AABB enclosing the rotated polygon (used as a cheap broad-phase).
+        For a ``"box"`` at ``angle == 0.0`` this is the item's own box; otherwise
+        it is the AABB enclosing the (possibly rotated) polygon, used as a cheap
+        broad-phase.
         """
-        xs = [px for px, _ in self.polygon()]
-        ys = [py for _, py in self.polygon()]
+        poly = self.polygon()
+        xs = [px for px, _ in poly]
+        ys = [py for _, py in poly]
         return (min(xs), min(ys), max(xs), max(ys))
 
 
@@ -241,10 +337,13 @@ def make_scene(
     values produce more overlap. All sizes and positions are in pixels.
 
     ``rotate`` is an EXPERIMENTAL opt-in (spike): when True each item is given a
-    random footprint ``angle`` in radians, turning the boxes into rotated
-    rectangles. It defaults to False, and when False NO extra random draw is
-    made, so the rng draw order -- and therefore every existing scene and
-    downstream simulation result -- is byte-for-byte identical to before.
+    random footprint ``angle`` in radians AND a per-kind convex shape from
+    :data:`KIND_SHAPE` (pen = thin rectangle, key = elongated hexagon, mug =
+    rounded octagon, trash = irregular convex blob). It defaults to False, and
+    when False every item stays an axis-aligned ``"box"`` and NO extra random
+    draw is made, so the rng draw order -- and therefore every existing scene
+    and downstream simulation result -- is byte-for-byte identical to before.
+    All shapes are strictly convex (the overlap clipping is convex-only).
     """
     if n_items < 0:
         raise ValueError("n_items must be non-negative")
@@ -288,7 +387,12 @@ def make_scene(
         # EXPERIMENTAL: only draw an angle when rotation is requested, so the
         # default (rotate=False) draw order is unchanged from the box model.
         angle = float(rng.uniform(0.0, np.pi)) if rotate else 0.0
-        items.append(Item(id=i, kind=kind, x=x, y=y, w=w, h=h, z=z, angle=angle))
+        # Shape is a deterministic per-kind lookup (no rng draw), so it never
+        # perturbs the draw order. Axis-aligned mode keeps every item a "box".
+        shape = KIND_SHAPE.get(kind, "box") if rotate else "box"
+        items.append(
+            Item(id=i, kind=kind, x=x, y=y, w=w, h=h, z=z, angle=angle, shape=shape)
+        )
 
     return Scene(
         width=DESK_W,

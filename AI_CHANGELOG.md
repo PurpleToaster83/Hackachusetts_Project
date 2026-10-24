@@ -571,3 +571,42 @@
 ### Testing
 - Ran `.venv/bin/python -m pytest -q`: 120 passed, 2 warnings (pre-existing imageio deprecations). The 108 box baseline is unchanged.
 - Verified default ExperimentConfig.rotate is False and the axis-aligned batch is byte-identical to a direct box run_episode; confirmed a rotated TrialConfig still produces replays with rotated item footprints. Browser launch is a manual step (not run here).
+
+## 2026-10-24 - SPIKE (experiment-shapes): per-kind convex polygon footprints
+
+### Changes
+- Extended the experimental rotated mode so each item type uses a distinct convex polygon footprint (pen = thin rectangle, key = elongated hexagon, mug = rounded octagon, trash = irregular convex blob) instead of only rotated rectangles. Strictly convex throughout; no concave shapes. Axis-aligned mode stays byte-identical and grasp constants are unchanged.
+
+### Files Modified
+- `src/scene.py` — added `Item.shape`, `_local_vertices()`, shape-aware `polygon()`/`area`; added `_convex_hull` and the `KIND_SHAPE` map; `make_scene(rotate=True)` assigns per-kind shapes.
+- `tests/test_scene_rotated.py` — added 15 tests for the convex-polygon footprints.
+
+### Technical Details
+- `Item.shape` defaults to "box"; `_local_vertices()` returns the exact axis-aligned box corners for "box", so `shape="box"`/`angle=0` keeps overlap/coverage byte-identical. Other shapes are convex polygons scaled to fit within the item's w x h.
+- The trash "blob" is built from deterministic per-item jittered points (default_rng(id), independent of the sim rng) passed through `_convex_hull` (Andrew's monotone chain, CCW), guaranteeing convexity — the convex-only `_overlap_area` clipping is never fed a concave shape. No STOP was needed; the convex-only constraint was fully satisfiable.
+- `area` is shoelace for non-box shapes (so `covered_fraction` divides by the true polygon area) and `w*h` for boxes (unchanged). All kind shapes verified convex, CCW, and area <= w*h.
+- `make_scene` assigns shape via a deterministic `KIND_SHAPE` lookup (no rng draw), so the default (rotate=False) draw order and results are unchanged; every item stays a "box" in axis-aligned mode.
+- Renderer not changed this turn: the geometry/overlap uses the true convex polygons, but Live View still draws non-box shapes as rectangles until `_local_vertices` is wired into `draw_frame` (flagged to the user).
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 135 passed, 2 warnings (pre-existing imageio deprecations). Up from 120 (+15).
+- Confirmed the baseline is intact: everything except the rotated-shape test file is still exactly 108 passed (axis-aligned byte-identical; box overlap 400.0, area 1600). The rotated-shape file alone is 27 passed (12 earlier rotated-rectangle tests + 15 new polygon tests).
+- Verified each kind's footprint is convex/CCW, overlap is symmetric for mixed shapes and never exceeds the smaller area, covered_fraction stays in [0,1], and polygon scenes are deterministic per seed.
+- `git diff --stat -- src/robot.py` is empty: grasp-probability constants untouched.
+
+## 2026-10-24 - SPIKE (experiment-shapes): Live View draws true convex polygon footprints
+
+### Changes
+- Updated the Live View frame renderer so that, in experimental polygon/rotated mode, each item is drawn as its actual convex footprint (pen rectangle, key hexagon, mug rounded octagon, trash blob) instead of a plain rectangle. Rendering-only: no physics, no overlap math, and axis-aligned rendering are unchanged. The 135-test suite stays green.
+
+### Files Modified
+- `src/trace.py` — `ItemState` now carries `shape` (default "box"), populated from the scene item.
+- `app/logic.py` — `ItemBox` carries `shape`; `_to_replay_frame` propagates it; `_draw_item_glyph` draws the true convex polygon for rotated/non-box items.
+
+### Technical Details
+- For any rotated or non-box item, `_draw_item_glyph` reconstructs the engine `src.scene.Item` from the drawable snapshot and calls its `.polygon()`, so the drawn footprint matches the sim's overlap/coverage geometry exactly (single source of truth). The axis-aligned box path (detailed pen/key/mug/trash glyphs) is untouched.
+- No physics/geometry changed: the renderer only READS `Item.polygon()`; the overlap math, grasp constants, and `src/scene.py` geometry functions are unchanged. (`src/scene.py` is in this turn's diff only from the prior turn's polygon work, already logged.)
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 135 passed, 2 warnings (pre-existing imageio deprecations). Unchanged count, confirming rendering-only.
+- Rendered and visually inspected a polygon-mode Live View frame: keys draw as hexagons, mugs as rounded octagons, trash as an irregular blob, pens as tilted rectangles; a box-mode frame still renders boxes. Previews written under out/ (gitignored). Confirmed axis-aligned items all keep shape="box".

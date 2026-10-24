@@ -79,6 +79,7 @@ class ItemState:
     h: float
     z: float
     angle: float = 0.0
+    shape: str = "box"  # convex footprint shape; lets the renderer draw it
 
 
 @dataclass
@@ -128,6 +129,7 @@ def _item_states(scene: Scene) -> list[ItemState]:
         ItemState(
             id=it.id, kind=it.kind, x=it.x, y=it.y, w=it.w, h=it.h, z=it.z,
             angle=getattr(it, "angle", 0.0),
+            shape=getattr(it, "shape", "box"),
         )
         for it in scene.items
     ]

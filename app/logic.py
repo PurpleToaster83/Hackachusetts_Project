@@ -415,6 +415,7 @@ class ItemBox:
     h: float
     z: float
     angle: float = 0.0
+    shape: str = "box"  # convex footprint shape (drawn true in rotated mode)
 
 
 @dataclass
@@ -468,6 +469,7 @@ def _to_replay_frame(tf) -> ReplayFrame:
             ItemBox(
                 id=s.id, kind=s.kind, x=s.x, y=s.y, w=s.w, h=s.h, z=s.z,
                 angle=getattr(s, "angle", 0.0),
+                shape=getattr(s, "shape", "box"),
             )
             for s in tf.items
         ],
@@ -547,18 +549,24 @@ def _draw_item_glyph(ax, s, fill, accent) -> None:
     half = min(w, h) / 2.0
 
     angle = getattr(s, "angle", 0.0)
-    if angle:
-        # EXPERIMENTAL (spike): draw the TRUE rotated footprint the sim uses --
-        # a rotated rectangle -- filled with the kind colour. The detailed
-        # per-kind glyph (handle arc, teeth, nib) is only drawn for axis-aligned
-        # items; a rotated item shows its real footprint plus the letter label.
-        hw, hh = w / 2.0, h / 2.0
-        ca, sa = _np.cos(angle), _np.sin(angle)
-        corners = [
-            (cx + lx * ca - ly * sa, cy + lx * sa + ly * ca)
-            for lx, ly in ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))
-        ]
-        ax.add_patch(Polygon(corners, facecolor=fill, edgecolor=accent, linewidth=1.0))
+    shape = getattr(s, "shape", "box")
+    if angle or shape != "box":
+        # EXPERIMENTAL: draw the TRUE convex footprint the sim uses for this
+        # item -- pen rectangle, key hexagon, mug rounded octagon, trash blob --
+        # by reconstructing the engine Item and asking it for its polygon, so
+        # the drawn shape exactly matches the overlap/coverage geometry. The
+        # detailed per-kind glyph (handle arc, teeth, nib) is only drawn for the
+        # axis-aligned box path; a rotated/polygon item shows its real footprint
+        # plus the letter label.
+        from src.scene import Item as _Item
+
+        footprint = _Item(
+            id=s.id, kind=s.kind, x=cx, y=cy, w=w, h=h, z=s.z,
+            angle=angle, shape=shape,
+        ).polygon()
+        ax.add_patch(
+            Polygon(footprint, facecolor=fill, edgecolor=accent, linewidth=1.0)
+        )
         return
 
     # Faint true-box outline (the actual sim footprint).

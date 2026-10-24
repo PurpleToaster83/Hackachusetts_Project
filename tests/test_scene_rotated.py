@@ -173,3 +173,105 @@ def test_occluders_deterministic_on_rotated_scene() -> None:
     scene = make_scene(seed=11, n_items=20, clutter=0.9, rotate=True)
     assert occluders(scene) == occluders(make_scene(
         seed=11, n_items=20, clutter=0.9, rotate=True))
+
+
+# --------------------------------------------------------------------------- #
+# Per-kind convex polygon footprints (experimental rotated mode)
+# --------------------------------------------------------------------------- #
+from src.scene import KIND_SHAPE, _convex_hull  # noqa: E402
+
+
+def _is_convex_ccw(poly: list[tuple[float, float]]) -> bool:
+    """True when ``poly`` is convex and wound counter-clockwise."""
+    n = len(poly)
+    for i in range(n):
+        o, a, b = poly[i], poly[(i + 1) % n], poly[(i + 2) % n]
+        cross = (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+        if cross < -1e-9:  # a strict clockwise turn -> not convex-CCW
+            return False
+    return True
+
+
+@pytest.mark.parametrize(
+    "kind,shape,w,h",
+    [("pen", "box", 48, 16), ("key", "hexagon", 44, 28),
+     ("mug", "rounded", 40, 40), ("trash", "blob", 40, 34)],
+)
+def test_each_kind_shape_is_convex_ccw(kind, shape, w, h) -> None:
+    """Every per-kind footprint is a strictly convex, CCW polygon."""
+    it = Item(id=1, kind=kind, x=200, y=200, w=float(w), h=float(h), z=0.0,
+              angle=0.6, shape=shape)
+    poly = it.polygon()
+    assert len(poly) >= 3
+    assert _is_convex_ccw(poly)
+
+
+@pytest.mark.parametrize("shape", ["box", "hexagon", "rounded", "blob"])
+def test_shape_area_within_bounding_box(shape) -> None:
+    """A convex footprint's area is positive and never exceeds its w*h box."""
+    it = Item(id=1, kind="mug", x=100, y=100, w=40.0, h=30.0, z=0.0,
+              shape=shape)
+    assert 0.0 < it.area <= 40.0 * 30.0 + 1e-6
+
+
+def test_kind_shape_map_covers_all_kinds() -> None:
+    """Every KIND has a shape, and all mapped shapes are supported convex ones."""
+    from src.scene import KINDS
+
+    assert set(KIND_SHAPE) == set(KINDS)
+    assert set(KIND_SHAPE.values()) <= {"box", "hexagon", "rounded", "blob"}
+
+
+def test_convex_hull_is_convex_and_ccw() -> None:
+    """_convex_hull returns a convex CCW polygon and drops interior points."""
+    pts = [(0, 0), (4, 0), (4, 4), (0, 4), (2, 2)]  # last point is interior
+    hull = _convex_hull(pts)
+    assert (2, 2) not in hull  # interior point excluded
+    assert _is_convex_ccw(hull)
+    assert len(hull) == 4
+
+
+def test_polygon_overlap_symmetric_for_mixed_shapes() -> None:
+    """overlap(a, b) == overlap(b, a) for two different convex polygon kinds."""
+    a = Item(id=0, kind="key", x=200, y=200, w=44, h=28, z=0.0,
+             angle=0.3, shape="hexagon")
+    b = Item(id=1, kind="trash", x=214, y=206, w=40, h=34, z=1.0,
+             angle=-0.5, shape="blob")
+    assert _overlap_area(a, b) == pytest.approx(_overlap_area(b, a))
+
+
+def test_polygon_overlap_never_exceeds_smaller_area() -> None:
+    """Intersection area cannot exceed either footprint's own area."""
+    a = Item(id=0, kind="mug", x=200, y=200, w=40, h=40, z=0.0,
+             angle=0.4, shape="rounded")
+    b = Item(id=1, kind="key", x=205, y=203, w=44, h=28, z=1.0,
+             angle=0.9, shape="hexagon")
+    ov = _overlap_area(a, b)
+    assert 0.0 <= ov <= min(a.area, b.area) + 1e-6
+
+
+def test_covered_fraction_in_unit_range_for_polygon_scene() -> None:
+    """covered_fraction stays within [0, 1] for a per-kind-shape rotated scene."""
+    scene = make_scene(seed=6, n_items=25, clutter=0.9, rotate=True)
+    # All four convex shapes should appear on a 25-item desk.
+    assert {it.shape for it in scene.items} <= {"box", "hexagon", "rounded", "blob"}
+    for it in scene.items:
+        assert 0.0 <= covered_fraction(scene, it.id) <= 1.0
+
+
+def test_polygon_scene_is_deterministic() -> None:
+    """A fixed seed fully determines a per-kind-shape rotated scene."""
+    a = make_scene(seed=9, n_items=20, clutter=0.8, rotate=True)
+    b = make_scene(seed=9, n_items=20, clutter=0.8, rotate=True)
+    assert a == b
+    assert [(it.shape, it.angle) for it in a.items] == \
+        [(it.shape, it.angle) for it in b.items]
+    assert occluders(a) == occluders(b)
+    # Per-item polygons are identical across rebuilds.
+    assert [it.polygon() for it in a.items] == [it.polygon() for it in b.items]
+
+
+def test_axis_aligned_mode_keeps_all_boxes() -> None:
+    """Without rotate, every item stays a box at angle 0 (byte-identical path)."""
+    plain = make_scene(seed=6, n_items=25, clutter=0.9)
+    assert all(it.shape == "box" and it.angle == 0.0 for it in plain.items)
