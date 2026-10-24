@@ -77,7 +77,7 @@ def _experiment_controls() -> logic.ExperimentConfig:
     st.sidebar.header("Experiment")
 
     n_items = st.sidebar.slider(
-        "Items on the desk (n_items)",
+        "Items on the desk",
         min_value=3,
         max_value=logic.N_ITEMS_MAX,
         value=15,
@@ -120,12 +120,8 @@ def _experiment_controls() -> logic.ExperimentConfig:
     )
     rotate = shape_model.startswith("Rotated")
 
-    # Show each selected strategy's one-line description as plain text. These
-    # are display-only captions (no new widgets); the learned policy is a
-    # learned LINEAR scoring policy, not a neural network or "AI".
-    for name in planners:
-        st.sidebar.caption(f"**{name}** — {_STRATEGY_BLURB.get(name, logic.planner_description(name))}")
-
+    # Per-strategy and clutter explanations live in the "How it works" expander
+    # in the main body, so the sidebar stays uncluttered.
     seeds = list(range(int(base_seed), int(base_seed) + int(n_trials)))
     return logic.ExperimentConfig(
         n_items=int(n_items),
@@ -277,6 +273,12 @@ def _render_live_view(result: logic.ExperimentResult) -> None:
         "Top-down view of a simulated kinematic gripper "
         "(no 3D physics or real hardware)."
     )
+    st.caption(
+        "The gripper is the two-pronged claw (a pale two-finger shape that "
+        "closes over an item to grasp it). It is pale while moving, turns green "
+        "while grasping, amber while pushing, and shows a thin red outline when "
+        "a grasp misses."
+    )
 
     rows = result.rows
     if not rows:
@@ -341,9 +343,11 @@ def _render_live_view(result: logic.ExperimentResult) -> None:
         frame_i = min(n - 1, frame_i + 1)
 
     speed = st.select_slider(
-        "Speed (frames advanced per tick while playing)",
-        options=[1, 2, 4, 8],
-        value=2,
+        "Playback speed",
+        options=[0.5, 1.0, 2.0],
+        value=1.0,
+        format_func=lambda x: f"{x:g}x",
+        help="How fast the replay plays: 0.5x is half speed, 2x is double.",
     )
 
     frame_i = st.slider("Frame", min_value=0, max_value=max(0, n - 1), value=frame_i)
@@ -360,12 +364,14 @@ def _render_live_view(result: logic.ExperimentResult) -> None:
     m3.metric("Failed grasps", fr.failed_count)
     m4.metric("Pushes", fr.push_count)
 
-    # Playback: advance and rerun until the end, then stop.
+    # Playback: advance one frame per rerun (smooth) and scale the per-frame
+    # delay by the chosen speed. Base rate is 15 fps (1/15 s per frame at 1x);
+    # 2x halves the delay, 0.5x doubles it. Stop at the last frame.
     if st.session_state.get(_PLAYING_KEY) and frame_i < n - 1:
         import time
 
-        st.session_state[_FRAME_KEY] = min(n - 1, frame_i + int(speed))
-        time.sleep(1.0 / 15.0)
+        st.session_state[_FRAME_KEY] = min(n - 1, frame_i + 1)
+        time.sleep((1.0 / 15.0) / float(speed))
         st.rerun()
     elif frame_i >= n - 1:
         st.session_state[_PLAYING_KEY] = False
@@ -386,6 +392,27 @@ def main() -> None:
         "experiment in the sidebar, run it, and compare strategies by the "
         "number of ticks they take and grasps they miss."
     )
+
+    with st.expander("How it works — desk, clutter, and strategies", expanded=False):
+        st.markdown(
+            "**The desk.** Each run scatters items (pens, keys, mugs, trash) on "
+            "a flat 2D desk. Items can overlap and partly cover each other; a "
+            "buried item is harder for the gripper to grasp."
+        )
+        st.markdown(
+            "**Clutter (0–1).** How tightly items are packed. At 0 items are "
+            "spread out with little overlap; at 1 they are crammed into the "
+            "middle so they overlap and hide one another, making the desk much "
+            "harder to clear. It controls difficulty, not the number of items."
+        )
+        st.markdown("**The strategies (how each one decides what to grab next):**")
+        for name in logic.available_planners():
+            st.markdown(f"- **{name}** — {_STRATEGY_BLURB.get(name, logic.planner_description(name))}")
+        st.caption(
+            "All strategies are hand-written rules except \"learned\", which is "
+            "a learned linear scoring policy. Everything "
+            "here is a simulation; ticks are abstract time units, not seconds."
+        )
 
     config = _experiment_controls()
 

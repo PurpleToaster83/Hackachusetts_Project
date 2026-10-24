@@ -739,3 +739,70 @@
 ### Testing
 - Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Unchanged, zero failures.
 - Confirmed `git diff main -- src/robot.py src/planner.py app/logic.py` prints nothing (untouched); the module parses; widget-call counts are unchanged (sliders 5, selectboxes 3, multiselect 1, buttons 5), confirming no widgets added or removed.
+
+## 2026-10-24 - FEATURE (learned-policy branch): visible "How it works" explainer (all strategies + clutter)
+
+### Changes
+- Added always-visible explanatory copy to the Streamlit app so a first-time viewer sees what every strategy does and what clutter means, without selecting each planner. Text/display only — no input widgets, logic, or numbers changed.
+
+### Files Modified
+- `app/streamlit_app.py` — added a "How it works — desk, clutter, and strategies" expander under the intro, and a visible clutter caption under the clutter slider.
+
+### Technical Details
+- The expander explains the desk/overlap, clutter (0–1, how tightly items are packed = difficulty, not item count), and lists ALL six strategies (random, nearest, leastcov, nearretry, occlusion, learned) with plain-language one-liners pulled from the existing `_STRATEGY_BLURB` (no duplicated copy; falls back to `logic.planner_description`). It reiterates the learned policy is a learned linear scoring policy, not a neural network, and that ticks are abstract time units.
+- A caption under the clutter slider surfaces the clutter explanation visibly rather than only in the tooltip.
+- `st.expander`, `st.caption`, and `st.markdown` are display containers, not input widgets — input-widget counts are unchanged (sliders 5, selectbox 3, multiselect 1, number_input 1, buttons 5), so no controls were added.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Unchanged, zero failures.
+- Confirmed the module parses, input-widget counts are unchanged, and `git diff main -- src/robot.py src/planner.py app/logic.py` prints nothing (those files untouched).
+
+## 2026-10-24 - FEATURE (learned-policy branch): remove redundant sidebar captions
+
+### Changes
+- Removed the sidebar clutter caption and the per-selected-strategy caption lines from the Streamlit app, since those explanations now live in the "How it works" expander in the main body. Display/copy only — no widgets, logic, or numbers changed.
+
+### Files Modified
+- `app/streamlit_app.py` — deleted the `st.sidebar.caption` under the clutter slider and the per-planner strategy caption loop.
+
+### Technical Details
+- The control tooltips (`help=`) on the sliders/selects remain; only the always-on sidebar captions were removed. `_STRATEGY_BLURB` is still used by the expander (line 400), so it is not orphaned.
+- No `st.sidebar.caption` calls remain; the sidebar is now uncluttered and the strategy/clutter explanations appear only in the body expander/dropdown.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Unchanged, zero failures.
+- Confirmed the module parses, the expander still references `_STRATEGY_BLURB`, and `git diff main -- src/robot.py src/planner.py app/logic.py` prints nothing (those files untouched).
+
+## 2026-10-24 - FEATURE (learned-policy branch): soften gripper fail cue + describe the gripper
+
+### Changes
+- Fixed the jarring one-frame "whole claw turns solid red" on a failed grasp in Live View, and added a caption describing what the gripper looks like. Rendering/copy only — no engine, physics, or numbers changed.
+
+### Files Modified
+- `app/logic.py` — reworked `_draw_gripper` so body colour reflects the ACTION (pale moving, green grasping, amber pushing); a failed grasp keeps the green grasp body and shows the miss as a thin red OUTLINE instead of a solid-red fill.
+- `app/streamlit_app.py` — added a Live View caption describing the two-pronged claw and its colours.
+
+### Technical Details
+- Previously `event == "fail"` set the entire gripper fill to red for that single frame, which read as a confusing flash (and conflated outcome with action). Now a failed grasp is treated as the grasp attempt it is: fingers still close, body stays green, and only the jaw outline turns red (2px) as a subtle "missed" cue. The failed item itself still flashes red in `_draw_item_glyph`, so the miss remains clear.
+- Caption text: the gripper is the two-pronged claw — pale while moving, green while grasping, amber while pushing, thin red outline when a grasp misses.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Unchanged, zero failures.
+- Rendered an actual fail frame and visually confirmed the claw is green with a red outline, not solid red (preview under out/, gitignored).
+- Confirmed `git diff main -- src/robot.py src/planner.py src/scene.py src/sim.py` prints nothing (engine/physics untouched).
+
+## 2026-10-24 - FEATURE (learned-policy branch): Live View playback speed control (0.5x / 1x / 2x)
+
+### Changes
+- Replaced the confusing Live View "frames advanced per tick" control (options 1/2/4/8) with a clear playback-speed control (0.5x / 1x / 2x) so the viewer can choose how fast the replay plays. UI change in the app only; no engine, physics, or numbers changed.
+
+### Files Modified
+- `app/streamlit_app.py` — changed the speed select-slider to a 0.5x/1x/2x playback multiplier (default 1x, formatted as "0.5x/1x/2x") and reworked the playback loop timing.
+
+### Technical Details
+- Playback now advances exactly one frame per rerun (smooth) and scales the per-frame delay by the chosen speed instead of skipping frames. Base rate is 15 fps: 1x = 1/15 s per frame, 2x halves the delay (faster), 0.5x doubles it (slower). Verified delays: 0.5x -> 0.133s, 1x -> 0.067s, 2x -> 0.033s.
+- The old control sped up by advancing multiple frames per step, which skipped frames and read as choppy; the new one keeps every frame and changes the dwell time, which is the intuitive meaning of playback speed.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Unchanged, zero failures.
+- Confirmed the module parses, verified the per-speed delay math, and confirmed `git diff main -- src/robot.py src/planner.py src/scene.py src/sim.py` prints nothing (engine/physics untouched). Actual playback timing is only observable in a live browser session (not run here).

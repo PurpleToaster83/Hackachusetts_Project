@@ -681,26 +681,37 @@ def _draw_gripper(ax, gx: float, gy: float, event: str) -> None:
     A rectangular hub with two short thick parallel fingers extending from it
     toward the target (downward in screen space), forming an open claw with a
     visible gap. The whole gripper is sized relative to a typical item
-    (:data:`_GRIPPER_SPAN`) so it is clearly visible. On a ``grasp`` the fingers
-    close the gap and the claw is highlighted; ``push`` and the idle move keep
-    the existing colours (green grasp, amber push, red fail, pale idle).
+    (:data:`_GRIPPER_SPAN`) so it is clearly visible.
+
+    Colour reflects the ACTION, not the outcome, so the claw does not jarringly
+    flash a different fill from frame to frame: it is pale while moving, green
+    while grasping (fingers close the gap), and amber while pushing. A FAILED
+    grasp is still a grasp attempt, so the body stays green and the miss is
+    shown only as a thin red outline around the jaws -- a subtle cue instead of
+    recolouring the entire claw solid red for one frame.
     """
     from matplotlib.patches import Rectangle
 
-    color = "#f0f0f5"
-    if event == "grasp":
+    # Body fill by action type. A failed grasp keeps the grasp (green) body.
+    if event in ("grasp", "fail"):
         color = "#78e68c"
     elif event == "push":
         color = "#f0c86e"
-    elif event == "fail":
-        color = "#eb4646"
+    else:
+        color = "#f0f0f5"
+
+    # Outline: normally near-black; a failed grasp gets a thin red edge as a
+    # subtle "missed" cue without swapping the whole claw to red.
+    edge = "#eb4646" if event == "fail" else "#141418"
+    edge_w = 2.0 if event == "fail" else 1.2
 
     span = _GRIPPER_SPAN          # overall width of the claw
     finger_len = span * 0.85      # how far the fingers reach toward the target
     finger_thick = span * 0.22    # thick, clearly visible fingers
     hub_h = span * 0.28           # the base/hub the fingers hang from
     open_gap = span * 0.52        # inner gap between fingers when open
-    gap = open_gap * 0.35 if event == "grasp" else open_gap  # close on grasp
+    # Fingers close on a grasp attempt (success or fail), since both reach in.
+    gap = open_gap * 0.35 if event in ("grasp", "fail") else open_gap
 
     # Hub sits "behind" the target (toward -y); fingers extend toward +y so the
     # claw reaches over the item centered at (gx, gy).
@@ -708,17 +719,17 @@ def _draw_gripper(ax, gx: float, gy: float, event: str) -> None:
     hub_w = gap + 2 * finger_thick
     ax.add_patch(
         Rectangle((gx - hub_w / 2, hub_top), hub_w, hub_h,
-                  facecolor=color, edgecolor="#141418", linewidth=1.2, zorder=6)
+                  facecolor=color, edgecolor=edge, linewidth=edge_w, zorder=6)
     )
     # Left and right fingers (thick parallel rectangles) extending from the hub.
     fy = hub_top + hub_h
     ax.add_patch(
         Rectangle((gx - gap / 2 - finger_thick, fy), finger_thick, finger_len,
-                  facecolor=color, edgecolor="#141418", linewidth=1.2, zorder=6)
+                  facecolor=color, edgecolor=edge, linewidth=edge_w, zorder=6)
     )
     ax.add_patch(
         Rectangle((gx + gap / 2, fy), finger_thick, finger_len,
-                  facecolor=color, edgecolor="#141418", linewidth=1.2, zorder=6)
+                  facecolor=color, edgecolor=edge, linewidth=edge_w, zorder=6)
     )
 
 
