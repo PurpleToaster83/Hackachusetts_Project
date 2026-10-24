@@ -54,6 +54,20 @@ _METRIC_LABELS: dict[str, str] = {
     "pushes": "Pushes",
 }
 
+# Plain-language, one-line description of each sorting strategy. Display-only
+# copy. The learned policy is described as a learned LINEAR scoring policy --
+# not a neural network or "AI".
+_STRATEGY_BLURB: dict[str, str] = {
+    "random": "picks a random item each step — a baseline to beat.",
+    "nearest": "always grabs the closest item, ignoring how buried it is.",
+    "leastcov": "grabs the most-exposed (least-covered) item first.",
+    "nearretry": "like nearest, but gives up on an item that keeps slipping and "
+    "moves on.",
+    "occlusion": "clears items on top first so it uncovers the ones beneath.",
+    "learned": "a learned linear scoring policy optimized by seeded search and "
+    "evaluated on held-out seeds; it learned to clear crowded clusters first.",
+}
+
 
 # --------------------------------------------------------------------------- #
 # Sidebar: Experiment controls
@@ -67,7 +81,7 @@ def _experiment_controls() -> logic.ExperimentConfig:
         min_value=3,
         max_value=logic.N_ITEMS_MAX,
         value=15,
-        help="How many items to scatter on each 640x480 desk.",
+        help="How many items to scatter on each simulated desk. More items means a more cluttered, harder sort.",
     )
     clutter = st.sidebar.slider(
         "Clutter",
@@ -75,41 +89,42 @@ def _experiment_controls() -> logic.ExperimentConfig:
         max_value=1.0,
         value=0.9,
         step=0.05,
-        help="Higher clutter pulls items together, causing more overlap.",
+        help="0 spreads items out; 1 packs them together so they overlap and hide each other, making grasps harder.",
     )
     n_trials = st.sidebar.slider(
         "Trials (seeds per planner)",
         min_value=2,
         max_value=50,
         value=20,
-        help="Each trial is one seeded desk; more trials tighten the CIs.",
+        help="How many different random desks to run per strategy. More trials give steadier averages (tighter confidence intervals).",
     )
     base_seed = st.sidebar.number_input(
         "Base seed",
         min_value=0,
         value=0,
         step=1,
-        help="Seeds run base_seed .. base_seed + trials - 1.",
+        help="The random seed that generates the desks. The same seed always reproduces the same desks, so runs are repeatable.",
     )
     planners = st.sidebar.multiselect(
         "Planners to compare",
         options=logic.available_planners(),
         default=["nearest", "occlusion"],
-        help="Pick two or more planners to compare on identical desks.",
+        help="Pick the sorting strategies to compare. Every strategy is run on the identical set of desks for a fair comparison.",
     )
 
     shape_model = st.sidebar.selectbox(
         "Object shape model",
         options=["Axis-aligned boxes", "Rotated footprints (experimental)"],
         index=0,  # default: axis-aligned, so existing behavior is unchanged
-        help="Axis-aligned boxes match the published results. Rotated footprints "
-        "model items as tilted 2D rectangles (same flat top-down simulation).",
+        help="How item footprints are modeled. Axis-aligned boxes is the default and matches the published results; rotated footprints is experimental and draws tilted 2D polygons (still a flat top-down simulation, not 3D).",
     )
     rotate = shape_model.startswith("Rotated")
 
-    # Show each selected planner's one-line description as plain text.
+    # Show each selected strategy's one-line description as plain text. These
+    # are display-only captions (no new widgets); the learned policy is a
+    # learned LINEAR scoring policy, not a neural network or "AI".
     for name in planners:
-        st.sidebar.caption(f"**{name}** — {logic.planner_description(name)}")
+        st.sidebar.caption(f"**{name}** — {_STRATEGY_BLURB.get(name, logic.planner_description(name))}")
 
     seeds = list(range(int(base_seed), int(base_seed) + int(n_trials)))
     return logic.ExperimentConfig(
@@ -152,13 +167,14 @@ def _tie_notes(result: logic.ExperimentResult) -> list[str]:
         sb: logic.Stat = getattr(b, key)
         if logic.overlap(sa, sb):
             notes.append(
-                f"{label}: tie ({a.planner} vs {b.planner}) — 95% intervals overlap."
+                f"{label}: statistical tie ({a.planner} vs {b.planner}) — "
+                "95% intervals overlap, so no real difference at this sample size."
             )
         else:
-            winner = a.planner if sa.mean < sb.mean else b.planner
+            lower = a.planner if sa.mean < sb.mean else b.planner
             notes.append(
-                f"{label}: {winner} lower ({a.planner} vs {b.planner}) — "
-                "intervals do not overlap."
+                f"{label}: {lower} is lower ({a.planner} vs {b.planner}) — "
+                "intervals do not overlap, a real difference."
             )
     return notes
 
@@ -167,9 +183,12 @@ def _render_results(result: logic.ExperimentResult) -> None:
     """Render the Results section from a cached ExperimentResult."""
     st.subheader("Results")
     st.caption(
-        "Per-planner mean +/- 95% confidence interval over the experiment's "
-        "seeds, from real episode runs. 'tie' means the two planners' intervals "
-        "overlap at this sample size."
+        "Each number is the average over all the desks (trials) for that "
+        "strategy, shown as mean +/- a 95% confidence interval -- the range the "
+        "true average is very likely within. When two strategies' intervals "
+        "overlap we call it a statistical tie and do not declare a winner; only "
+        "non-overlapping intervals indicate a real difference. Ticks are "
+        "abstract time units, not seconds."
     )
     if result.config.rotate:
         st.caption(
@@ -249,11 +268,13 @@ def _render_live_view(result: logic.ExperimentResult) -> None:
     """Render the Live View section: pick a trial and scrub its replay."""
     st.subheader("Live View")
     st.caption(
-        "Replay a single trial tick by tick from pre-rendered headless frames. "
-        "Pick a trial, then play, pause, step, or scrub."
+        "A tick-by-tick replay of one simulated sorting episode: pick a model "
+        "(strategy) and one of its trials, then play, pause, step, or scrub. In "
+        "the experimental rotated shape mode, items are drawn as their tilted "
+        "2D polygon footprints."
     )
     st.caption(
-        "Top-down view of a kinematic sorting simulation "
+        "Top-down view of a simulated kinematic gripper "
         "(no 3D physics or real hardware)."
     )
 
@@ -358,9 +379,12 @@ def main() -> None:
     st.set_page_config(page_title="Messy Desk Lab", layout="wide")
     st.title("Messy Desk Lab")
     st.write(
-        "Compare desk-sorting planners on randomized cluttered desks. "
-        "Configure an experiment in the sidebar and run it to see metrics "
-        "with 95% confidence intervals."
+        "A rule-based 2D simulation that compares strategies a robot gripper "
+        "could use to clear a cluttered desk of overlapping items into bins. "
+        "It is a simulation — no real vision, hardware, or 3D physics — and "
+        "\"ticks\" are abstract time units, not seconds. Configure an "
+        "experiment in the sidebar, run it, and compare strategies by the "
+        "number of ticks they take and grasps they miss."
     )
 
     config = _experiment_controls()

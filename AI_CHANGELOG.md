@@ -720,3 +720,22 @@
 ### Testing
 - Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Unchanged count, zero failures.
 - Confirmed `git diff main -- src/robot.py app/logic.py src/planner.py` prints nothing (those files untouched); verified the module parses; and exercised the grouping/clamp logic headlessly (a stale index of 99 clamps to a valid trial for each model, including learned).
+
+## 2026-10-24 - FEATURE (learned-policy branch): plain-language copy pass in Streamlit app
+
+### Changes
+- Improved the user-facing text in the Streamlit app so a first-time viewer understands it, without changing any widgets, layout, logic, or numbers. Text/copy only.
+
+### Files Modified
+- `app/streamlit_app.py` — rewrote the intro, control help strings, per-strategy descriptions, the Results CI/tie explanation, and the Live View replay description; added a `_STRATEGY_BLURB` dict of one-line strategy descriptions.
+
+### Technical Details
+- Top intro now describes a rule-based 2D simulation comparing gripper sorting strategies, states it is a simulation (no real vision/hardware/3D), and that ticks are abstract time units.
+- Each control (n_items, clutter, trials, base seed, planner multiselect, shape toggle) got a plain-language help string; the shape toggle notes axis-aligned is the default and rotated is experimental (still 2D, not 3D).
+- Added `_STRATEGY_BLURB` with a one-liner per strategy, including the learned policy as "a learned linear scoring policy optimized by seeded search and evaluated on held-out seeds; it learned to clear crowded clusters first" — explicitly LINEAR, not a neural network or "AI". The existing per-planner caption widget now shows these (falls back to `logic.planner_description`).
+- Results caption explains mean +/- 95% CI and that overlapping intervals are a "statistical tie" with no winner; `_tie_notes` wording updated to "statistical tie" on overlap and "is lower ... a real difference" only when intervals do not overlap. Live View describes a tick-by-tick replay of one simulated episode and that rotated mode draws tilted 2D polygon footprints.
+- Honesty constraints honored: simulation language, abstract ticks, learned=linear policy, statistical-tie-no-winner, axis-aligned default / rotated experimental, only existing features described.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q`: 151 passed, 2 warnings (pre-existing imageio deprecations). Unchanged, zero failures.
+- Confirmed `git diff main -- src/robot.py src/planner.py app/logic.py` prints nothing (untouched); the module parses; widget-call counts are unchanged (sliders 5, selectboxes 3, multiselect 1, buttons 5), confirming no widgets added or removed.
