@@ -427,3 +427,28 @@
 - Ran `.venv/bin/python -m pytest -q` (Python 3.12.15, pytest 9.1.1): 70 passed, 2 warnings. The 2 warnings are pre-existing imageio deprecations in `tests/test_render.py`, unrelated to this change.
 - Simulated the Cloud scenario: loaded `app/streamlit_app.py` by file path from `/tmp` with no PYTHONPATH (streamlit/matplotlib/pandas stubbed); the module loaded and both `src` and `src.sim` resolved — the case that previously failed. Did not launch a live browser server (manual step; streamlit not installed in the venv).
 - Confirmed `git diff --stat -- src/` shows no changes.
+
+## 2026-10-24 - Messy Desk Lab Stage 4: trace core promotion + Live View
+
+### Changes
+- Promoted the per-tick trace structures and stepping logic out of `src/render.py` into a new headless `src/trace.py` (behavior-preserving), with `render.py` re-exporting the moved names so its public API is unchanged. Added a deterministic replay + headless frame renderer to `app/logic.py` and a Live View section to the Streamlit app. No simulation behavior in `src/sim.py`, `src/robot.py`, `src/scene.py`, or `src/planner.py` was changed.
+
+### Files Modified
+- `src/trace.py` — new headless trace core (ItemState, ContainerState, TickFrame, Trace, PLANNER_FACTORIES, build_trace), moved from render.py; no pygame import.
+- `src/render.py` — removed the moved definitions; now re-exports them from `src.trace` (13 insertions, 168 deletions).
+- `app/logic.py` — added ReplayFrame/ReplayResult/ContainerBox/ItemBox/FrameImage, `replay_trial`, `draw_frame` (matplotlib Agg), and `render_frames`.
+- `app/streamlit_app.py` — added the Live View section (trial picker, cached render, play/pause/step/speed, live counters).
+- `tests/test_trace.py` — new parity/determinism tests for the trace core.
+- `tests/test_logic.py` — added replay/render tests.
+- `.kiro/specs/messy-desk-lab/tasks.md` — marked Stage 4 (task 4 and sub-tasks 4.1–4.5) complete.
+
+### Technical Details
+- The trace block (dataclasses + `build_trace`) was moved verbatim into `src/trace.py` so the stepping logic lives in the headless core; `render.py` re-exports `PLANNER_FACTORIES`, `ItemState`, `ContainerState`, `TickFrame`, `Trace`, `build_trace` (verified to be the same objects), so `from src.render import build_trace, render` still works and the existing render parity test still passes.
+- Deliberate decision: `run_episode` was NOT rewired to route through the trace core, to avoid any risk of changing simulation behavior (forbidden by the plan). Instead `build_trace` is the single trace implementation and a parity test locks it to `run_episode`'s output across 5 seeds × 5 planners × 3 configs. Flagged to the user that a true shared stepping generator touching sim.py would need sign-off.
+- `app/logic.py` `replay_trial` rebuilds a fresh scene + fresh planner from TrialConfig, builds the trace via `src.trace` (never render), and pairs it with a direct `run_episode` result. `draw_frame` uses matplotlib Agg and encodes each kind by letter + colour + edge style (colour never the only cue); `render_frames` renders once with per-frame alt text. The app imports no streamlit/pygame/render (verified via sys.modules); the one grep hit is the word "render.py" in a docstring.
+- Live View renders frames once and caches them keyed by TrialConfig in `st.session_state`, so scrubbing indexes into the list; play advances by the speed value and reruns until the end; empty-desk trials show a "no items" message.
+
+### Testing
+- Ran `.venv/bin/python -m pytest -q` (Python 3.12.15, pytest 9.1.1): 108 passed, 2 warnings (up from 70; the parity sweep and replay/render tests added the rest). The 2 warnings are pre-existing imageio deprecations in `tests/test_render.py`, unrelated to this change.
+- Confirmed via `git diff --quiet` that `src/sim.py`, `src/robot.py`, `src/scene.py`, and `src/planner.py` are unchanged (no grasp/tick/constant logic touched).
+- Verified `app/logic.py` loads none of streamlit/pygame/src.render into sys.modules, and `app/streamlit_app.py` has no src/pygame/render imports.

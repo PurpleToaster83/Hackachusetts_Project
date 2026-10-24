@@ -67,30 +67,30 @@ Hard constraints honored throughout:
     - Human action: connect the GitHub repo in Streamlit Community Cloud, set main file `app/streamlit_app.py` and requirements `app/requirements.txt`, deploy, then confirm the public URL loads and a batch run completes with no pygame/display error.
     - _Requirements: 11.4, 11.5_
 
-- [ ] 4. Stage 4 — Trace_Core promotion + Live View replay
-  - [ ] 4.1 Promote the trace structures and stepping logic into a headless core (`src/trace.py`)
+- [x] 4. Stage 4 — Trace_Core promotion + Live View replay
+  - [x] 4.1 Promote the trace structures and stepping logic into a headless core (`src/trace.py`)
     - Move `ItemState`, `ContainerState`, `TickFrame`, `Trace`, and the `build_trace` stepping logic from `src/render.py` into a new headless `src/trace.py` (no pygame import).
     - Behavior-preserving: keep the exact `numpy.random.default_rng(seed)` draw order, `effective_grasp_prob`, `travel_ticks`, `FAILED_GRASP_TICKS`, `push`, and the `10 * items_total` default budget so outcomes stay bit-for-bit identical to `src/sim.run_episode`.
     - Make `src/render.py` re-export `build_trace`, `Trace`, `TickFrame`, `ItemState`, `ContainerState` (and keep `PLANNER_FACTORIES`) from `src/trace.py` so its public API is unchanged.
     - _Requirements: 7.1, 7.4_
-  - [ ]* 4.2 Write the Trace_Core parity/determinism test in `tests/test_trace.py`
+  - [x]* 4.2 Write the Trace_Core parity/determinism test in `tests/test_trace.py`
     - **Property 2: Trace matches sim** — for a sweep of seeds/planners/configs, trace final counters equal the paired `run_episode` `EpisodeResult`: `sorted_count == items_sorted`, `failed_count == failed_grasps`, `push_count == pushes`, last `tick == steps`.
     - **Validates: Requirements 7.2, 7.3**
     - Also assert two `build_trace` calls with equal config yield identical frames. **Validates: Requirement 5.4**
     - Confirm existing `src/` and `render` tests still pass (run `pytest -q`). **Validates: Requirement 7.4**
     - _Requirements: 5.4, 7.2, 7.3, 7.4_
-  - [ ] 4.3 Implement replay + headless frame rendering in `app/logic.py`
+  - [x] 4.3 Implement replay + headless frame rendering in `app/logic.py`
     - Add `ReplayFrame`, `ReplayResult`, `ContainerBox`, `ItemBox`, `FrameImage` dataclasses.
     - `replay_trial(config) -> ReplayResult`: rebuild a FRESH scene + FRESH planner from `TrialConfig`, call the `src.trace` core (never `render.py`), map `TickFrame`s to `ReplayFrame`s, attach containers and the paired `EpisodeResult`.
     - `draw_frame(frame, containers, width_px, height_px)` renders one `(height_px, width_px, 3)` uint8 RGB array with matplotlib Agg; `render_frames(frames, containers)` renders the whole trace once, returning `FrameImage`s with alt text.
     - _Requirements: 2.1, 2.3, 2.4, 2.6, 5.2, 5.3, 5.5, 6.4, 13.3_
-  - [ ]* 4.4 Write replay/render unit tests in `tests/test_logic.py`
+  - [x]* 4.4 Write replay/render unit tests in `tests/test_logic.py`
     - **Property 1: Determinism per config** — `replay_trial` twice with equal `TrialConfig` yields identical frames. **Validates: Requirement 5.4**
     - **Property 2: Trace matches sim** at the app layer — replay final counters equal the paired `run_episode` `EpisodeResult`. **Validates: Requirement 5.5**
     - `draw_frame` returns `(height_px, width_px, 3)` uint8; a `fail` event marks only `event_item`. **Validates: Requirements 2.6, 2.4**
     - `n_items == 0` yields a zero-/single-frame replay with `items_total == 0`. **Validates: Requirement 2.5**
     - _Requirements: 2.4, 2.5, 2.6, 5.4, 5.5_
-  - [ ] 4.5 Add the Live View section to `app/streamlit_app.py`
+  - [x] 4.5 Add the Live View section to `app/streamlit_app.py`
     - Pick one trial from the cached experiment; call `logic.replay_trial` then `logic.render_frames` once (cache frames in `st.session_state`).
     - Provide play/pause/step/speed over a session-state frame index using `st.image`; never open a pygame window.
     - For an empty replay (`n_items == 0`) show a "no items on this desk" message.

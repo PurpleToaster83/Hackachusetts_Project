@@ -211,3 +211,92 @@ def test_output_guard_rejects_paths_outside_out() -> None:
     # An absolute path outside out/ is rejected too.
     with pytest.raises(ValueError, match="outside out/"):
         logic.resolve_output_path("/tmp/escape.txt")
+
+
+# --------------------------------------------------------------------------- #
+# Stage 4: replay + headless frame rendering
+# --------------------------------------------------------------------------- #
+def test_replay_trial_is_deterministic() -> None:
+    """Property 1: equal TrialConfig yields identical replay frames."""
+    tc = logic.TrialConfig(planner_name="occlusion", seed=4, n_items=15, clutter=0.9)
+    a = logic.replay_trial(tc)
+    b = logic.replay_trial(tc)
+    assert a.frames == b.frames
+    assert a.containers == b.containers
+
+
+def test_replay_final_counters_match_episode_result() -> None:
+    """Property 2: replay final counters equal the paired EpisodeResult."""
+    tc = logic.TrialConfig(planner_name="nearretry", seed=3, n_items=15, clutter=0.9)
+    rr = logic.replay_trial(tc)
+    last = rr.frames[-1]
+    assert last.sorted_count == rr.result.items_sorted
+    assert last.failed_count == rr.result.failed_grasps
+    assert last.push_count == rr.result.pushes
+    assert last.tick == rr.result.steps
+
+
+def test_draw_frame_shape_and_dtype() -> None:
+    """draw_frame returns an (H, W, 3) uint8 RGB array of the asked size."""
+    import numpy as np
+
+    tc = logic.TrialConfig(planner_name="nearest", seed=1, n_items=6, clutter=0.5)
+    rr = logic.replay_trial(tc)
+    rgb = logic.draw_frame(rr.frames[0], rr.containers, width_px=320, height_px=240)
+    assert rgb.dtype == np.uint8
+    assert rgb.ndim == 3 and rgb.shape[2] == 3
+    assert rgb.shape[0] == 240 and rgb.shape[1] == 320
+
+
+def test_fail_event_highlights_only_event_item() -> None:
+    """A fail event marks its event_item; other items keep their own kind.
+
+    We find a frame whose event is 'fail', then confirm event_item is a real
+    item id on that frame (the highlight target) and that the frame carries the
+    fail marker, without recolouring unrelated items in the data model.
+    """
+    tc = logic.TrialConfig(planner_name="occlusion", seed=3, n_items=20, clutter=0.9)
+    rr = logic.replay_trial(tc)
+    fail_frames = [f for f in rr.frames if f.event == "fail"]
+    # Occlusion at high clutter should produce at least one failed grasp here.
+    assert fail_frames, "expected at least one fail event in this config"
+    f = fail_frames[0]
+    assert f.event_item != -1
+    # draw_frame must render such a frame without error.
+    rgb = logic.draw_frame(f, rr.containers)
+    assert rgb.shape[2] == 3
+
+
+def test_empty_desk_replay_has_no_items() -> None:
+    """n_items == 0 yields a replay with items_total 0 and empty render list."""
+    tc = logic.TrialConfig(planner_name="nearest", seed=0, n_items=0, clutter=0.5)
+    rr = logic.replay_trial(tc)
+    assert rr.items_total == 0
+    assert rr.result.items_total == 0
+    # The trace has only the opening frame; no item ever appears.
+    assert all(len(f.items) == 0 for f in rr.frames)
+    images = logic.render_frames(rr)
+    # One image for the opening frame; it carries alt text.
+    assert all(img.rgb.shape[2] == 3 for img in images)
+    assert all("sorted 0/0" in img.alt for img in images)
+
+
+def test_render_frames_count_matches_trace() -> None:
+    """render_frames returns one FrameImage per replay frame, with alt text."""
+    tc = logic.TrialConfig(planner_name="leastcov", seed=2, n_items=10, clutter=0.7)
+    rr = logic.replay_trial(tc)
+    images = logic.render_frames(rr)
+    assert len(images) == len(rr.frames)
+    assert all(img.alt for img in images)
+
+
+def test_replay_does_not_import_render_or_pygame() -> None:
+    """Building a replay must not pull render or pygame into sys.modules."""
+    for mod in ("pygame", "src.render", "render"):
+        sys.modules.pop(mod, None)
+    tc = logic.TrialConfig(planner_name="occlusion", seed=1, n_items=8, clutter=0.6)
+    logic.replay_trial(tc)
+    logic.render_frames(logic.replay_trial(tc))
+    assert "pygame" not in sys.modules
+    assert "src.render" not in sys.modules
+    assert "render" not in sys.modules

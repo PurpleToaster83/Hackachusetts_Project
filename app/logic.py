@@ -1,9 +1,11 @@
 """Headless logic layer for Messy Desk Lab.
 
 Pure, typed, GUI-independent logic that the Streamlit app calls. This module
-imports ONLY the simulation core under ``src/``, numpy, and the standard
-library. It MUST NOT import ``streamlit``, ``pygame``, or ``render`` (directly
-or transitively), so it stays headless and unit-testable.
+imports ONLY the simulation core under ``src/``, numpy, matplotlib (the Agg
+backend), and the standard library. It MUST NOT import ``streamlit``,
+``pygame``, or ``render`` (directly or transitively), so it stays headless and
+unit-testable. Trace frames come from ``src.trace`` (the headless core), never
+from ``render.py``.
 
 The layer reuses the engine rather than duplicating behavior: scenes come from
 ``src.scene.make_scene``, planners from ``src.planner``, and every episode runs
@@ -19,6 +21,8 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
+
 from src.planner import (
     LeastCoveredPlanner,
     NearestPlanner,
@@ -26,8 +30,9 @@ from src.planner import (
     OcclusionPlanner,
     RandomPlanner,
 )
-from src.scene import Scene, make_scene
+from src.scene import DESK_H, DESK_W, Scene, make_scene
 from src.sim import EpisodeResult, run_episode
+from src.trace import Trace, build_trace
 
 # --------------------------------------------------------------------------- #
 # Input ranges
@@ -349,3 +354,252 @@ def resolve_output_path(path: str | Path) -> Path:
             f"refusing to write outside out/: {resolved} is not under {out_root}"
         )
     return resolved
+
+
+# --------------------------------------------------------------------------- #
+# Live View replay: build a trace and render it to headless RGB frames
+# --------------------------------------------------------------------------- #
+# One letter per kind so colour is never the only cue (accessibility).
+_KIND_LETTER: dict[str, str] = {"pen": "P", "key": "K", "mug": "M", "trash": "T"}
+
+# Per-kind fill colours (0-1 RGB for matplotlib) and a distinct edge style, so
+# each kind carries three redundant cues: letter, colour, and outline.
+_KIND_RGB: dict[str, tuple[float, float, float]] = {
+    "pen": (70 / 255, 130 / 255, 220 / 255),
+    "key": (220 / 255, 200 / 255, 70 / 255),
+    "mug": (90 / 255, 190 / 255, 120 / 255),
+    "trash": (180 / 255, 90 / 255, 90 / 255),
+}
+_KIND_EDGE: dict[str, str] = {
+    "pen": "solid",
+    "key": "dashed",
+    "mug": "solid",
+    "trash": "dotted",
+}
+_FAIL_RGB = (235 / 255, 70 / 255, 70 / 255)
+
+
+@dataclass
+class ContainerBox:
+    """A static drop target for drawing. Center and size in pixels."""
+
+    kind: str
+    x: float
+    y: float
+    w: float
+    h: float
+
+
+@dataclass
+class ItemBox:
+    """A drawable item snapshot. Center and size in pixels; z is stack height."""
+
+    id: int
+    kind: str
+    x: float
+    y: float
+    w: float
+    h: float
+    z: float
+
+
+@dataclass
+class ReplayFrame:
+    """One simulated tick of a replay (mirrors the trace-core TickFrame).
+
+    ``gx``/``gy`` is the gripper center in pixels. ``event`` is one of ``""``,
+    ``"grasp"``, ``"fail"``, ``"push"``. Counters are cumulative up to this tick.
+    """
+
+    gx: float
+    gy: float
+    items: list[ItemBox]
+    event: str
+    event_item: int  # item id acted on, or -1
+    tick: int  # simulation tick at 15 Hz
+    sorted_count: int
+    failed_count: int
+    push_count: int
+
+
+@dataclass
+class ReplayResult:
+    """A full replay for one trial: per-tick frames plus static containers.
+
+    ``result`` is the paired aggregate ``EpisodeResult`` so callers can confirm
+    the trace matches the sim. ``items_total`` is the item count at the start.
+    """
+
+    config: TrialConfig
+    frames: list[ReplayFrame]
+    containers: list[ContainerBox]
+    result: EpisodeResult
+    items_total: int
+
+
+@dataclass
+class FrameImage:
+    """A rendered frame as an RGB array for display, with accessible alt text."""
+
+    rgb: "np.ndarray"  # shape (H, W, 3), dtype uint8
+    alt: str
+
+
+def _to_replay_frame(tf) -> ReplayFrame:
+    """Convert a trace-core TickFrame into a drawable ReplayFrame."""
+    return ReplayFrame(
+        gx=tf.gx,
+        gy=tf.gy,
+        items=[
+            ItemBox(id=s.id, kind=s.kind, x=s.x, y=s.y, w=s.w, h=s.h, z=s.z)
+            for s in tf.items
+        ],
+        event=tf.event,
+        event_item=tf.event_item,
+        tick=tf.tick,
+        sorted_count=tf.sorted_count,
+        failed_count=tf.failed_count,
+        push_count=tf.push_count,
+    )
+
+
+def replay_trial(config: TrialConfig) -> ReplayResult:
+    """Deterministically replay one trial into per-tick frames.
+
+    Rebuilds a FRESH scene and FRESH planner from ``config`` (clamping inputs),
+    builds the trace via the headless ``src.trace`` core (never ``render.py``),
+    and pairs it with a direct ``run_episode`` result on an equally-fresh scene
+    and planner so callers can verify trace-matches-sim. Deterministic in
+    ``config``.
+    """
+    n_items = clamp_n_items(config.n_items)
+    clutter = clamp_clutter(config.clutter)
+
+    trace: Trace = build_trace(
+        config.planner_name, seed=config.seed, n_items=n_items, clutter=clutter
+    )
+
+    # Paired aggregate from the authoritative runner (fresh scene + planner).
+    scene = make_scene(seed=config.seed, n_items=n_items, clutter=clutter)
+    planner = make_planner(config.planner_name, config.seed)
+    result = run_episode(scene, planner, seed=config.seed)
+
+    containers = [
+        ContainerBox(kind=c.kind, x=c.x, y=c.y, w=c.w, h=c.h)
+        for c in trace.containers
+    ]
+    frames = [_to_replay_frame(tf) for tf in trace.frames]
+    # items_total is the item count at the opening frame (tick 0).
+    items_total = len(frames[0].items) if frames else 0
+
+    return ReplayResult(
+        config=config,
+        frames=frames,
+        containers=containers,
+        result=result,
+        items_total=items_total,
+    )
+
+
+def draw_frame(
+    frame: ReplayFrame,
+    containers: list[ContainerBox],
+    width_px: int = 420,
+    height_px: int = 320,
+) -> "np.ndarray":
+    """Render one replay frame to an (H, W, 3) uint8 RGB array with Agg.
+
+    Headless: forces the matplotlib Agg backend before importing pyplot, so no
+    display and no pygame window are needed. Each kind is drawn with a letter
+    label, a fill colour, and a distinct edge style so colour is never the only
+    cue. A ``"fail"`` event highlights only ``frame.event_item``.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Circle, Rectangle
+
+    dpi = 100
+    fig = plt.figure(figsize=(width_px / dpi, height_px / dpi), dpi=dpi)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, DESK_W)
+    ax.set_ylim(DESK_H, 0)  # invert y so it matches screen coordinates
+    ax.set_facecolor("#2c303a")
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    for c in containers:
+        ax.add_patch(
+            Rectangle(
+                (c.x - c.w / 2, c.y - c.h / 2),
+                c.w,
+                c.h,
+                facecolor="#5a6070",
+                edgecolor="none",
+            )
+        )
+        ax.text(
+            c.x, c.y, _KIND_LETTER.get(c.kind, "?"),
+            color="white", ha="center", va="center", fontsize=9,
+        )
+
+    for s in frame.items:  # already low-z first from the trace core
+        is_fail = frame.event == "fail" and s.id == frame.event_item
+        color = _FAIL_RGB if is_fail else _KIND_RGB.get(s.kind, (0.8, 0.8, 0.8))
+        ax.add_patch(
+            Rectangle(
+                (s.x - s.w / 2, s.y - s.h / 2),
+                s.w,
+                s.h,
+                facecolor=color,
+                edgecolor="#141418",
+                linewidth=0.8,
+                linestyle=_KIND_EDGE.get(s.kind, "solid"),
+            )
+        )
+        ax.text(
+            s.x, s.y, _KIND_LETTER.get(s.kind, "?"),
+            color="#141418", ha="center", va="center", fontsize=8,
+        )
+
+    ring = "#f0f0f5"
+    if frame.event == "grasp":
+        ring = "#78e68c"
+    elif frame.event == "push":
+        ring = "#f0c86e"
+    ax.add_patch(Circle((frame.gx, frame.gy), 9, fill=False, edgecolor=ring, linewidth=2))
+
+    fig.canvas.draw()
+    rgb = np.asarray(fig.canvas.buffer_rgba())[:, :, :3].copy()
+    plt.close(fig)
+
+    # Ensure the promised shape; Agg sizing can round by a pixel at some dpis.
+    assert rgb.dtype == np.uint8
+    return rgb
+
+
+def frame_alt_text(frame: ReplayFrame, items_total: int) -> str:
+    """Accessible one-line description of a replay frame's state."""
+    event = frame.event or "move"
+    return (
+        f"Tick {frame.tick}: {event}; "
+        f"sorted {frame.sorted_count}/{items_total}, "
+        f"failed {frame.failed_count}, pushes {frame.push_count}."
+    )
+
+
+def render_frames(result: ReplayResult) -> list[FrameImage]:
+    """Render a whole replay to a list of RGB frames with alt text, once.
+
+    Produces one ``FrameImage`` per tick frame so the UI can scrub by indexing
+    into the list without re-rendering. Returns an empty list for a replay with
+    no frames (e.g. an empty desk).
+    """
+    return [
+        FrameImage(
+            rgb=draw_frame(fr, result.containers),
+            alt=frame_alt_text(fr, result.items_total),
+        )
+        for fr in result.frames
+    ]

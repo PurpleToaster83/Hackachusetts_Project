@@ -42,6 +42,9 @@ from app import logic
 # Constants
 # --------------------------------------------------------------------------- #
 _RESULT_KEY = "experiment_result"  # st.session_state cache key
+_REPLAY_KEY = "live_view_replay"  # cached (TrialConfig-key, frames) for Live View
+_FRAME_KEY = "live_view_frame"  # current frame index
+_PLAYING_KEY = "live_view_playing"  # play/pause flag
 
 # Human-readable metric labels (text, not colour, carries meaning).
 _METRIC_LABELS: dict[str, str] = {
@@ -174,6 +177,122 @@ def _render_results(result: logic.ExperimentResult) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Live View
+# --------------------------------------------------------------------------- #
+def _trial_label(row: logic.TrialRow) -> str:
+    """Human-readable label for one trial in the picker."""
+    c = row.config
+    r = row.result
+    return (
+        f"{c.planner_name} | seed {c.seed} | "
+        f"sorted {r.items_sorted}/{r.items_total}, {r.steps} ticks"
+    )
+
+
+def _get_or_build_replay(row: logic.TrialRow):
+    """Return the cached FrameImages for ``row``, rendering once if needed.
+
+    The render is keyed by the trial's config so changing the picked trial
+    re-renders, but scrubbing the slider does not. Frames are cached in
+    ``st.session_state`` so playback indexes into them without recomputing.
+    """
+    key = (
+        row.config.planner_name,
+        row.config.seed,
+        row.config.n_items,
+        row.config.clutter,
+    )
+    cached = st.session_state.get(_REPLAY_KEY)
+    if cached is None or cached[0] != key:
+        with st.spinner("Rendering replay..."):
+            replay = logic.replay_trial(row.config)
+            images = logic.render_frames(replay)
+        st.session_state[_REPLAY_KEY] = (key, replay, images)
+        st.session_state[_FRAME_KEY] = 0
+        st.session_state[_PLAYING_KEY] = False
+        cached = st.session_state[_REPLAY_KEY]
+    return cached[1], cached[2]
+
+
+def _render_live_view(result: logic.ExperimentResult) -> None:
+    """Render the Live View section: pick a trial and scrub its replay."""
+    st.subheader("Live View")
+    st.caption(
+        "Replay a single trial tick by tick from pre-rendered headless frames. "
+        "Pick a trial, then play, pause, step, or scrub."
+    )
+
+    rows = result.rows
+    if not rows:
+        st.info("Run an experiment first to populate trials.")
+        return
+
+    idx = st.selectbox(
+        "Trial to replay",
+        options=list(range(len(rows))),
+        format_func=lambda i: _trial_label(rows[i]),
+    )
+    row = rows[idx]
+
+    try:
+        replay, images = _get_or_build_replay(row)
+    except Exception as exc:  # noqa: BLE001 - surface any replay/render failure
+        st.error(f"Could not render this trial: {exc}")
+        return
+
+    if replay.items_total == 0 or not images:
+        st.info("No items on this desk for that seed — try another trial.")
+        return
+
+    n = len(images)
+    frame_i = int(st.session_state.get(_FRAME_KEY, 0))
+    frame_i = max(0, min(frame_i, n - 1))
+
+    # Transport controls.
+    c1, c2, c3, c4 = st.columns(4)
+    if c1.button("Play"):
+        st.session_state[_PLAYING_KEY] = True
+    if c2.button("Pause"):
+        st.session_state[_PLAYING_KEY] = False
+    if c3.button("Step back"):
+        st.session_state[_PLAYING_KEY] = False
+        frame_i = max(0, frame_i - 1)
+    if c4.button("Step forward"):
+        st.session_state[_PLAYING_KEY] = False
+        frame_i = min(n - 1, frame_i + 1)
+
+    speed = st.select_slider(
+        "Speed (frames advanced per tick while playing)",
+        options=[1, 2, 4, 8],
+        value=2,
+    )
+
+    frame_i = st.slider("Frame", min_value=0, max_value=max(0, n - 1), value=frame_i)
+    st.session_state[_FRAME_KEY] = frame_i
+
+    img = images[frame_i]
+    st.image(img.rgb, caption=img.alt, use_container_width=False)
+
+    # Live counters for the current frame (text, not colour alone).
+    fr = replay.frames[frame_i]
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Sorted", f"{fr.sorted_count}/{replay.items_total}")
+    m2.metric("Ticks", fr.tick)
+    m3.metric("Failed grasps", fr.failed_count)
+    m4.metric("Pushes", fr.push_count)
+
+    # Playback: advance and rerun until the end, then stop.
+    if st.session_state.get(_PLAYING_KEY) and frame_i < n - 1:
+        import time
+
+        st.session_state[_FRAME_KEY] = min(n - 1, frame_i + int(speed))
+        time.sleep(1.0 / 15.0)
+        st.rerun()
+    elif frame_i >= n - 1:
+        st.session_state[_PLAYING_KEY] = False
+
+
+# --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
 def main() -> None:
@@ -206,6 +325,8 @@ def main() -> None:
         return
 
     _render_results(result)
+    st.divider()
+    _render_live_view(result)
 
 
 if __name__ == "__main__":
